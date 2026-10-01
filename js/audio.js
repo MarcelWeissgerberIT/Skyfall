@@ -214,10 +214,58 @@ export class Sound {
       case 'click':
         this.osc('square', 900, 600, 0.04, 0.1);
         break;
+      case 'door':
+        this.noiseBurst(0.12, 0.5, 'lowpass', 900, 200, 1);
+        this.osc('square', 140, 70, 0.08, 0.25, 0.02);
+        break;
+      case 'crash':
+        if (!this.gate(name, 150)) return;
+        this.noiseBurst(0.45, 0.9, 'bandpass', 1800, 300, 0.8);
+        this.osc('square', 90, 40, 0.25, 0.4);
+        break;
+      case 'rummage':
+        this.noiseBurst(0.18, 0.25, 'bandpass', 1200 + Math.random() * 1500, 600, 2);
+        break;
+      case 'beep':
+        this.osc('square', 1400, 1400, 0.07, 0.18);
+        break;
+      case 'rescue':
+        [523, 659, 784].forEach((f, i) => this.osc('triangle', f, f, 0.18, 0.25, i * 0.09));
+        break;
+      case 'mission':
+        [392, 523, 659, 784, 1046].forEach((f, i) => this.osc('square', f, f, 0.14, 0.12, i * 0.08));
+        this.osc('sine', 131, 131, 0.8, 0.3, 0.3);
+        break;
       case 'over':
         [392, 370, 349, 330].forEach((f, i) => this.osc('triangle', f, f * 0.97, 0.45, 0.2, i * 0.38));
         this.osc('sine', 82, 70, 2.2, 0.3, 1.1);
         break;
+    }
+  }
+
+  // Wailing police siren while Dale borrows the cruiser.
+  siren(on) {
+    if (!this.ctx) return;
+    const c = this.ctx;
+    if (on && !this.sirenOsc) {
+      const o = c.createOscillator(), g = c.createGain(), l = c.createOscillator(), lg = c.createGain();
+      o.type = 'triangle';
+      o.frequency.value = 760;
+      l.frequency.value = 0.9;
+      lg.gain.value = 230;
+      l.connect(lg).connect(o.frequency);
+      g.gain.value = 0;
+      g.gain.setTargetAtTime(this.on ? 0.07 : 0, c.currentTime, 0.1);
+      o.connect(g).connect(this.sfx);
+      o.start();
+      l.start();
+      this.sirenOsc = { o, l, g };
+    } else if (!on && this.sirenOsc) {
+      const s = this.sirenOsc;
+      s.g.gain.setTargetAtTime(0, c.currentTime, 0.08);
+      s.o.stop(c.currentTime + 0.4);
+      s.l.stop(c.currentTime + 0.4);
+      this.sirenOsc = null;
     }
   }
 

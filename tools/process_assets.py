@@ -63,6 +63,11 @@ SPRITES = {
     "tumbleweed": ("59_tumbleweed", (120, 120)),
     "vulture": ("60_vulture", (220, 220)),
     "flamingo": ("61_flamingo", (90, 90)),
+    "police_rear": ("90_police_rear", (300, 300)),
+    "police_side": ("91_police_side", (300, 300)),
+    "police_front": ("92_police_front", (200, 200)),
+    "police_back": ("93_police_back", (200, 200)),
+    "bus": ("94_bus", (440, 440)),
 }
 
 UI = {
@@ -78,6 +83,12 @@ UI = {
     "panel": ("40_panel", (640, 640)),
     "btn_grenade": ("46_b_grenade", (200, 200)),
     "icon_radio": ("63_i_radio", (128, 128)),
+    "btn_search": ("95_b_search", (180, 180)),
+    "btn_drive": ("96_b_drive", (180, 180)),
+    "btn_talk": ("97_b_talk", (180, 180)),
+    "btn_pet": ("98_b_pet", (180, 180)),
+    "btn_rig": ("99_b_rig", (180, 180)),
+    "btn_exit": ("9a_b_exit", (180, 180)),
 }
 
 TEXTURES = {

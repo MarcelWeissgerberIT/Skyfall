@@ -1,14 +1,18 @@
 // Canvas renderer: isometric diorama, cast shadows, day/night lighting and tilt-shift.
-import { C, TILE, clamp, rand } from './util.js';
+import { C, TILE, clamp, rand, dist2 } from './util.js';
 import { TT } from './world.js';
 import { PICKUP_SPRITE } from './game.js';
+import { carSprite } from './interact.js';
+
+// figure sizes (screen units at zoom 1) - small, like real model-railway people
+const SIZE = { player: 50, civ: 44, cow: 58, pickup: 34, core: 22 };
 
 const TEX_SCALE = { sand: 0.375, dirt: 0.375, grass: 0.22, concrete: 0.25, asphalt: 0.3 };
 const TEX_OF = ['sand', 'dirt', 'grass', 'concrete', 'asphalt'];
 const PICKUP_GLOW = { ammo: 'yellow', medkit: 'red', grenades: 'orange', smg: 'yellow', core: 'magenta' };
 const COLORS = {
   yellow: [255, 214, 120], orange: [255, 140, 50], red: [255, 70, 70], magenta: [255, 60, 220],
-  cyan: [90, 230, 255], violet: [170, 90, 255], warm: [255, 200, 130], blue: [70, 120, 255], white: [255, 255, 255],
+  cyan: [90, 230, 255], violet: [170, 90, 255], warm: [255, 200, 130], blue: [70, 120, 255], white: [255, 255, 255], green: [90, 255, 140],
 };
 
 export class Renderer {
@@ -278,6 +282,26 @@ export class Renderer {
       ctx.globalAlpha = 0.35 + pulse * 0.3;
       ctx.drawImage(this.glows[PICKUP_GLOW[k.type]], k.x - 34, k.y - 34, 68, 68);
     }
+    // evac zone: where survivors are dropped off
+    const ev = g.world.evac;
+    if (ev) {
+      const pulse = 0.5 + 0.5 * Math.sin(this.time * 3);
+      ctx.globalAlpha = 0.16 + pulse * 0.1;
+      ctx.fillStyle = '#5dff8a';
+      ctx.beginPath();
+      ctx.arc(ev.x, ev.y, 140, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.55 + pulse * 0.35;
+      ctx.strokeStyle = '#5dff8a';
+      ctx.lineWidth = 5;
+      ctx.setLineDash([22, 14]);
+      ctx.lineDashOffset = -this.time * 30;
+      ctx.beginPath();
+      ctx.arc(ev.x, ev.y, 140, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
     // meteor warnings
     for (const m of g.meteors) {
       const k = 1 - m.t / m.dur;
@@ -348,11 +372,12 @@ export class Renderer {
     const def = p.def;
     const img = this.A.img[p.sprite];
     let w, h;
-    if (def.drawW) (w = def.drawW), (h = (w * img.height) / img.width);
+    const dw = p.drawW || def.drawW;
+    if (dw) (w = dw), (h = (w * img.height) / img.width);
     else (h = def.drawH), (w = (h * img.width) / img.height);
     let ay;
     if (p.box) ay = 1 - p.baseOff / h;
-    else ay = 1 - (def.base || 0.03);
+    else ay = 1 - (p.base !== undefined ? p.base : def.base || 0.03);
     p.geom = { w, h, ay };
     return p.geom;
   }
@@ -382,7 +407,9 @@ export class Renderer {
     for (const t of g.tumbleweeds) add(6, t);
     for (const gr of g.grenades) add(7, gr);
     for (const f of g.fx) if (f.type === 'corpse') add(8, f);
-    if (!g.player.dead) add(9, g.player);
+    if (g.player.car) add(10, g.player.car);
+    else if (!g.player.dead) add(9, g.player);
+    this.interactTarget = g.interact && g.interact.kind !== 'exit' ? g.interact.o : null;
     objs.sort((a, b) => a.d - b.d);
 
     // shadows first so they never cover sprites
@@ -410,8 +437,13 @@ export class Renderer {
         if (o.spawnT < 1) return;
         break;
       }
-      case 2: key = o.type; [w, h] = this.sizeH(o.type, 62); ay = 0.97; flip = o.flip; if (o.taken) return; break;
-      case 3: key = 'cow'; [w, h] = this.sizeW('cow', 74); ay = 0.88; flip = o.flip; if (o.z > 2) return; break;
+      case 2: key = o.type; [w, h] = this.sizeH(o.type, SIZE.civ); ay = 0.97; flip = o.flip; if (o.taken) return; break;
+      case 3: key = 'cow'; [w, h] = this.sizeW('cow', SIZE.cow); ay = 0.88; flip = o.flip; if (o.z > 2) return; break;
+      case 10: {
+        const c = carSprite(o.h);
+        key = c.key; [w, h] = this.sizeW(c.key, c.w); ay = 1 - c.base; flip = c.flip;
+        break;
+      }
       case 9: {
         const s = this.playerSprite(o);
         key = s.key; w = s.w; h = s.h; ay = 0.97; flip = s.flip;
@@ -475,7 +507,7 @@ export class Renderer {
     const sx = (p.aimX - p.aimY), sy = (p.aimX + p.aimY);
     const back = sy < -0.15;
     const key = back ? 'player_back' : 'player_front';
-    const [w, h] = this.sizeH(key, 72);
+    const [w, h] = this.sizeH(key, SIZE.player);
     // front sprite faces down-left, back sprite faces up-right
     const flip = back ? sx < 0 : sx > 0;
     return { key, w, h, flip };
@@ -527,7 +559,19 @@ export class Renderer {
         const def = o.def;
         let skew = 0;
         if (def.sway) skew = Math.sin(t * 1.4 + o.x * 0.013 + o.y * 0.007) * def.sway + Math.sin(t * 3.1 + o.x) * def.sway * 0.3;
-        this.sprite(o.sprite, it.sx, it.sy, gm.w, gm.h, 0.5, gm.ay, o.flip, 0, skew);
+        const hl = this.interactTarget === o ? 0.18 + 0.12 * Math.sin(t * 8) : 0;
+        this.sprite(o.sprite, it.sx, it.sy, gm.w, gm.h, 0.5, gm.ay, o.flip, 0, skew, 1, hl);
+        // twinkles on things worth rummaging through / driving
+        if (((o.search && !o.searched) || o.drivable) && !g.player.car && dist2(o.x, o.y, g.player.x, g.player.y) < 520 * 520) {
+          const tw = 0.5 + 0.5 * Math.sin(t * 4 + o.x * 0.05);
+          const gy = it.sy - gm.h * gm.ay * z * (o.search === 'bin' ? 0.9 : 0.8);
+          this.glow(o.drivable ? 'cyan' : 'yellow', it.sx, gy, (o.drivable ? 18 : 13) * z, 0.3 + tw * 0.55);
+        }
+        if (o.rigged && g.bombs.some((b) => b.prop === o)) {
+          const fl = 0.5 + 0.5 * Math.sin(t * 16);
+          this.glow('red', it.sx, it.sy - 40 * z, 120 * z, 0.4 + fl * 0.5);
+          this.addLight(it.sx, it.sy - 20 * z, 220, 0.6 + fl * 0.4);
+        }
         if (def.light) {
           const fl = Math.random() < 0.02 ? 0.3 : 1;
           const lx = it.sx + (o.flip ? -1 : 1) * gm.w * 0.18 * z, ly = it.sy - gm.h * 0.86 * z;
@@ -561,7 +605,7 @@ export class Renderer {
           break;
         }
         const sp = o.type === 'crawler' ? 16 : o.type === 'brute' ? 6 : 10;
-        const hop = Math.abs(Math.sin(o.walkT * sp)) * (o.type === 'brute' ? 3 : 4) * z;
+        const hop = Math.abs(Math.sin(o.walkT * sp)) * (o.type === 'brute' ? 2.5 : 3) * z;
         const rot = Math.sin(o.walkT * sp) * (o.type === 'crawler' ? 0.05 : 0.08);
         const flash = o.hitT > 0 ? 0.8 : o.chargeT > 0 ? 0.3 : 0;
         this.sprite(o.def.sprite, it.sx, it.sy - hop, w, h, 0.5, 0.97, o.flip, rot, 0, 1, flash);
@@ -570,18 +614,20 @@ export class Renderer {
         break;
       }
       case 2: {
-        const [w, h] = this.sizeH(o.type, 62);
+        const [w, h] = this.sizeH(o.type, SIZE.civ);
         if (o.taken) {
           this.glow('magenta', it.sx, it.sy - (o.z || 0) * z - h * 0.4 * z, 50 * z, o.fade);
           this.sprite(o.type, it.sx, it.sy - (o.z || 0) * z, w, h, 0.5, 0.97, o.flip, Math.sin(t * 20) * 0.2, 0, o.fade, 0.6);
           break;
         }
-        const hop = Math.abs(Math.sin(o.walkT * 13)) * 4 * z;
-        this.sprite(o.type, it.sx, it.sy - hop, w, h, 0.5, 0.97, o.flip, Math.sin(o.walkT * 13) * 0.1);
+        const hop = Math.abs(Math.sin(o.walkT * 13)) * 3 * z;
+        const hl = this.interactTarget === o ? 0.25 + 0.15 * Math.sin(t * 8) : 0;
+        this.sprite(o.type, it.sx, it.sy - hop, w, h, 0.5, 0.97, o.flip, Math.sin(o.walkT * 13) * 0.1, 0, 1, hl);
+        if (o.follow) this.glow('green', it.sx, it.sy - h * z - 6 * z, 10 * z, 0.7 + 0.3 * Math.sin(t * 6));
         break;
       }
       case 3: {
-        const [w, h] = this.sizeW('cow', 74);
+        const [w, h] = this.sizeW('cow', SIZE.cow);
         if (o.state === 'abducted') {
           this.sprite('cow', it.sx, it.sy - o.z * z, w * o.scale, h * o.scale, 0.5, 0.6, o.flip, Math.sin(o.rot) * 0.6);
           break;
@@ -589,12 +635,12 @@ export class Renderer {
         let rot = 0, hop = 0;
         if (o.state === 'graze') rot = Math.max(0, Math.sin(t * 1.7 + o.x)) * 0.06 * (o.flip ? -1 : 1);
         else hop = Math.abs(Math.sin(t * 7 + o.x)) * 2 * z;
-        this.sprite('cow', it.sx, it.sy - hop, w, h, 0.5, 0.88, o.flip, rot);
+        this.sprite('cow', it.sx, it.sy - hop, w, h, 0.5, 0.88, o.flip, rot, 0, 1, this.interactTarget === o ? 0.2 + 0.15 * Math.sin(t * 8) : 0);
         break;
       }
       case 4: {
         const key = PICKUP_SPRITE[o.type];
-        const [w, h] = this.sizeW(key, o.type === 'core' ? 26 : 40);
+        const [w, h] = this.sizeW(key, o.type === 'core' ? SIZE.core : SIZE.pickup);
         const bob = (6 + Math.sin(o.t * 3) * 4 + (o.pop || 0) * 30) * z;
         const blink = o.drop && o.life < 5 ? (Math.sin(o.life * 20) > 0 ? 1 : 0.25) : 1;
         this.sprite(key, it.sx, it.sy - bob, w, h, 0.5, 0.9, false, Math.sin(o.t * 2) * 0.08, 0, blink);
@@ -641,20 +687,36 @@ export class Renderer {
       }
       case 9: {
         const s = this.playerSprite(o);
-        const hop = o.moving ? Math.abs(Math.sin(o.walkT * 11)) * 4 * z : 0;
+        const hop = o.moving ? Math.abs(Math.sin(o.walkT * 11)) * 3 * z : 0;
         const rot = o.moving ? Math.sin(o.walkT * 11) * 0.07 : 0;
         const [rx, ry] = [-(o.aimX - o.aimY) * C * o.recoil * 4 * z, -(o.aimX + o.aimY) * C * 0.5 * o.recoil * 4 * z];
         const flash = o.hurtT > 0 ? 0.9 : 0;
         this.sprite(s.key, it.sx + rx, it.sy - hop + ry, s.w, s.h, 0.5, 0.97, s.flip, rot, 0, 1, flash);
         // muzzle flash
         if (o.recoil > 0.65) {
-          const mx = it.sx + (o.aimX - o.aimY) * C * 30 * z, my = it.sy - 34 * z + (o.aimX + o.aimY) * C * 0.5 * 30 * z;
-          this.glow(o.plasmaT > 0 ? 'magenta' : 'yellow', mx, my, 30 * z * o.recoil, 1);
+          const mx = it.sx + (o.aimX - o.aimY) * C * 22 * z, my = it.sy - 24 * z + (o.aimX + o.aimY) * C * 0.5 * 22 * z;
+          this.glow(o.plasmaT > 0 ? 'magenta' : 'yellow', mx, my, 24 * z * o.recoil, 1);
         }
         // flashlight + personal light
         const ax = (o.aimX - o.aimY) * C, ay = (o.aimX + o.aimY) * C * 0.5;
         this.flash = { x: it.sx + ax * 150 * z, y: it.sy + ay * 150 * z - 10 * z, ang: Math.atan2(ay, ax) };
         this.addLight(it.sx, it.sy - 30 * z, 130, 0.95);
+        break;
+      }
+      case 10: {
+        // the borrowed police cruiser, 8 directions
+        const c = carSprite(o.h);
+        const [w, h] = this.sizeW(c.key, c.w);
+        const ay = 1 - c.base;
+        const bump = Math.abs(o.speed) > 30 ? Math.sin(t * 34) * 0.7 * z : 0;
+        this.sprite(c.key, it.sx, it.sy + bump, w, h, 0.5, ay, c.flip, 0, 0, 1, o.invT > 0 ? 0.5 : 0);
+        const ph = Math.floor(t * 7) % 2;
+        const roofY = it.sy - h * ay * z * 0.8;
+        this.glow(ph ? 'red' : 'blue', it.sx + (ph ? -6 : 6) * z, roofY, 42 * z, 0.55 + night * 0.45);
+        this.addLight(it.sx, it.sy - 10 * z, 150, 0.9);
+        const [hx, hy] = this.project(o.x + Math.cos(o.h) * 120, o.y + Math.sin(o.h) * 120);
+        this.addLight(hx, hy, 150, 0.85, 0.6);
+        this.flash = null;
         break;
       }
     }
@@ -675,7 +737,7 @@ export class Renderer {
     // bullets
     ctx.globalCompositeOperation = 'lighter';
     for (const b of g.bullets) {
-      const [sx, sy] = this.project(b.x, b.y, 30);
+      const [sx, sy] = this.project(b.x, b.y, 22);
       if (sx < -50 || sx > this.W + 50 || sy < -50 || sy > this.H + 50) continue;
       if (b.kind === 'plasma') {
         ctx.globalAlpha = 1;
@@ -685,7 +747,7 @@ export class Renderer {
         continue;
       }
       const l = b.kind === 'smg' ? 0.022 : 0.03;
-      const [ex, ey] = this.project(b.x - b.vx * l, b.y - b.vy * l, 30);
+      const [ex, ey] = this.project(b.x - b.vx * l, b.y - b.vy * l, 22);
       ctx.strokeStyle = b.kind === 'smg' ? 'rgba(255,230,150,0.9)' : 'rgba(255,240,190,0.95)';
       ctx.lineWidth = (b.kind === 'smg' ? 1.6 : 2.2) * z;
       ctx.beginPath();
@@ -694,7 +756,7 @@ export class Renderer {
       ctx.stroke();
     }
     for (const b of g.ebullets) {
-      const [sx, sy] = this.project(b.x, b.y, 28);
+      const [sx, sy] = this.project(b.x, b.y, 20);
       if (sx < -50 || sx > this.W + 50 || sy < -50 || sy > this.H + 50) continue;
       const r = (b.big ? 22 : 15) * z * (0.9 + 0.2 * Math.sin(this.time * 30 + b.x));
       ctx.globalAlpha = 1;
@@ -715,6 +777,11 @@ export class Renderer {
           ctx.globalCompositeOperation = 'lighter';
           ctx.globalAlpha = k;
           ctx.drawImage(this.glows.yellow, sx - 7 * z, sy - 7 * z, 14 * z, 14 * z);
+          break;
+        case 'heart':
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.globalAlpha = k;
+          ctx.drawImage(this.glows.red, sx - 9 * z, sy - 9 * z, 18 * z, 18 * z);
           break;
         case 'beamdot':
           ctx.globalCompositeOperation = 'lighter';

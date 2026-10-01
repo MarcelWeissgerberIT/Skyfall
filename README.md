@@ -25,10 +25,21 @@ fullscreen.
 | Move | left thumb (floating joystick) | WASD / arrow keys |
 | Aim & fire | automatic (drag on the right half to aim manually) | automatic |
 | Grenade | grenade button | Space / G |
+| Interact | context button (appears when something is in reach) | E / F |
 | Pause | pause button | Esc / P |
 
-Pickups: shells, medkits, grenades, SMG, alien plasma core. Civilians hand you supplies if you get
-close before the aliens do. Shoot the landed saucers before they fill the town.
+Things to do besides shooting:
+
+- **Search** houses, the corner store, trailers, parked cars and bins for supplies (and jokes).
+- **Drive** the abandoned police cruisers: siren on, run aliens over, get out before it explodes.
+- **Talk** to survivors so they follow you, then bring them to the **evac bus** at the sandbag fort.
+- **Pet** cows for a little emotional-support health.
+- **Rig** the gas station. Then run.
+- **Missions** from a very sarcastic dispatcher: scavenge, escort, destroy a landed saucer, save a
+  cow from abduction, joyride, blow things up. Rewards are supplies, gratitude is not included.
+
+Pickups: shells, medkits, grenades, SMG, alien plasma core. Shoot the landed saucers before they
+fill the town.
 
 ## How it's built
 

@@ -39,6 +39,14 @@ export const PROP_DEFS = {
   hydrant: { circle: 6, drawH: 26, base: 0.05 },
   streetlight: { circle: 5, drawH: 150, base: 0.02, light: true },
   sandbags: { circle: 26, drawW: 104, base: 0.3 },
+  bus: { box: [2.7, 1.0], drawW: 236 },
+  car_parked: { circle: 30, drawW: 134, base: 0.32 },
+};
+
+// What you find when you rummage through things, and what you can drive.
+const SEARCH_KIND = {
+  house_a: 'house', house_b: 'house', house_c: 'house', store: 'store', trailer: 'trailer',
+  car_minivan: 'car', car_pickup: 'car', car_sheriff: 'car', car_wreck: 'car', bin_mailbox: 'bin',
 };
 
 export class World {
@@ -153,6 +161,49 @@ export class World {
     }
     this.props.push(p);
     if (p.box || p.circle) this.registerCollider(p);
+    if (SEARCH_KIND[type]) p.search = SEARCH_KIND[type];
+    if (type === 'car_police') p.drivable = true;
+    if (type === 'gas_station') p.riggable = true;
+    return p;
+  }
+
+  // Remove a prop (e.g. a car somebody just drove off with) and its collision.
+  removeProp(p) {
+    const i = this.props.indexOf(p);
+    if (i >= 0) this.props.splice(i, 1);
+    if (!p.box && !p.circle) return;
+    let x0, y0, x1, y1;
+    if (p.box) ({ x0, y0, x1, y1 } = p.box);
+    else (x0 = p.x - p.circle, y0 = p.y - p.circle, x1 = p.x + p.circle, y1 = p.y + p.circle);
+    const i0 = Math.max(0, Math.floor(x0 / TILE)), i1 = Math.min(N - 1, Math.floor(x1 / TILE));
+    const j0 = Math.max(0, Math.floor(y0 / TILE)), j1 = Math.min(N - 1, Math.floor(y1 / TILE));
+    for (let j = j0; j <= j1; j++)
+      for (let i = i0; i <= i1; i++) {
+        const k = j * N + i;
+        const list = this.cgrid[k];
+        const at = list.indexOf(p);
+        if (at >= 0) list.splice(at, 1);
+        const cx = (i + 0.5) * TILE, cy = (j + 0.5) * TILE;
+        let solid = 0, blocked = 0;
+        for (const q of list) {
+          if (q.box && cx > q.box.x0 && cx < q.box.x1 && cy > q.box.y0 && cy < q.box.y1) solid = blocked = 1;
+          else if (q.circle >= 20 && i === Math.floor(q.x / TILE) && j === Math.floor(q.y / TILE)) blocked = 1;
+        }
+        this.solid[k] = solid;
+        this.blocked[k] = blocked;
+      }
+    this.flowSrc = -1;
+  }
+
+  // Put a car back into the world after a joyride (any heading -> round collider).
+  parkCar(x, y, sprite, flip, drawW, base) {
+    const p = this.addProp('car_parked', x, y, flip);
+    p.sprite = sprite;
+    p.drawW = drawW;
+    p.base = base;
+    p.drivable = true;
+    p.depth = x + y;
+    this.flowSrc = -1;
     return p;
   }
 
@@ -210,6 +261,11 @@ export class World {
       this.occupy(Math.floor(x / TILE), Math.floor(y / TILE));
     }
     this.lootSpots.push({ x: cx, y: cy, w: 3 }, { x: cx + 40, y: cy - 30, w: 3 });
+    // the evac bus parks at the curb on the fort's north side; survivors are dropped off next to it
+    this.addProp('bus', (bx + 4.5) * TILE, (by - 0.5) * TILE, false);
+    this.reserved = new Set();
+    for (let i = bx + 3; i < bx + 6; i++) this.reserved.add((by - 1) * N + i);
+    this.evac = { x: (bx + 4.5) * TILE, y: (by + 1.0) * TILE };
     this.decorateBlock(bx, by, { palms: 0, cars: 2, bins: 0, police: true });
   }
 
@@ -258,6 +314,7 @@ export class World {
       for (let i = TOWN_A; i <= TOWN_B; i++) {
         const t = this.tiles[j * N + i];
         if (t !== TT.CONC || isRoad(i) || isRoad(j)) continue;
+        if (this.reserved && this.reserved.has(j * N + i)) continue;
         const sideI = ROADS.some((r) => i === r - 1 || i === r + 2);
         const sideJ = ROADS.some((r) => j === r - 1 || j === r + 2);
         if (!sideI && !sideJ) continue;

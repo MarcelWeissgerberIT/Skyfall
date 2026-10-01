@@ -1,6 +1,7 @@
 // HUD, menus, intro cutscene and touch / keyboard input. All text uses the generated bitmap font.
 import { clamp, fmtTime } from './util.js';
-import { THREAT, rank } from './lines.js';
+import { THREAT, MISSIONS, rank } from './lines.js';
+import { ACTION_LABEL, ACTION_ICON } from './interact.js';
 
 export const STORY = [
   { video: 'couch', lines: ['1957. EARTH STARTS BROADCASTING TELEVISION INTO SPACE.', 'SEVENTY YEARS LATER, SOMEBODY OUT THERE FINALLY BINGED ALL OF IT.'] },
@@ -19,6 +20,7 @@ export class Input {
     this.ax = 0;
     this.ay = 0;
     this.grenade = false;
+    this.action = false;
     this.joy = null;
     this.aimP = null;
     this.keys = new Set();
@@ -30,6 +32,7 @@ export class Input {
     window.addEventListener('keydown', (e) => {
       this.keys.add(e.code);
       if (e.code === 'Space' || e.code === 'KeyG') this.grenade = true;
+      if (e.code === 'KeyE' || e.code === 'KeyF') this.action = true;
       if (e.code === 'Escape' || e.code === 'KeyP') this.ui.onPauseKey();
       if (e.code === 'Enter') this.ui.onEnter();
       if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault();
@@ -107,8 +110,9 @@ export class Input {
         this.ay = dy;
       }
     }
-    const out = { mx: this.mx, my: this.my, aim: this.aim, ax: this.ax, ay: this.ay, grenade: this.grenade };
+    const out = { mx: this.mx, my: this.my, aim: this.aim, ax: this.ax, ay: this.ay, grenade: this.grenade, action: this.action };
     this.grenade = false;
+    this.action = false;
     return out;
   }
 }
@@ -303,8 +307,14 @@ export class UI {
     this.img('icon_skull', killsX, top + 4 * u, 21 * u);
     // row 2: ammo (left), clock + threat (centre)
     const ay = top + 42 * u;
-    this.img('icon_ammo', left + 2 * u, ay, 28 * u);
-    if (p.plasmaT > 0 || p.smgT > 0) {
+    if (p.car) {
+      this.img('btn_drive', left + 2 * u, ay, 28 * u);
+      this.text('CRUISER', left + 38 * u, ay + 1 * u, 13 * u);
+      this.bar(left + 38 * u, ay + 19 * u, 70 * u, 7 * u, p.car.hp / p.car.maxHp, '#1b5fc7', '#7fb4ff');
+    } else this.img('icon_ammo', left + 2 * u, ay, 28 * u);
+    if (p.car) {
+      // the cruiser row replaces the ammo readout
+    } else if (p.plasmaT > 0 || p.smgT > 0) {
       const pl = p.plasmaT > 0;
       this.text(pl ? 'PLASMA' : 'SMG', left + 38 * u, ay + 1 * u, 13 * u);
       this.bar(left + 38 * u, ay + 19 * u, 60 * u, 7 * u, pl ? p.plasmaT / 12 : p.smgT / 18, pl ? '#a0169c' : '#c7841b', pl ? '#ff6af0' : '#ffd36a');
@@ -329,34 +339,99 @@ export class UI {
       this.bar(cx - 100 * u, by + 15 * u, 200 * u, 9 * u, g.mother.hp / g.mother.maxHp, '#6d0f8c', '#e45cff');
       by += 34 * u;
     }
+    // current dispatcher mission
+    if (g.mission) {
+      const m = g.mission;
+      const label = 'MISSION: ' + MISSIONS[m.type].text + (m.need > 1 ? '  ' + m.count + '/' + m.need : '');
+      const left2 = Math.max(0, m.limit - m.t);
+      const tstr2 = fmtTime(left2);
+      const size = this.fitSize(label, 11 * u, this.W - 110 * u);
+      const w2 = this.font.measure(label, size) + this.font.measure(tstr2, 11 * u) + 34 * u;
+      const x2 = cx - w2 / 2;
+      this.roundRect(x2, by, w2, 24 * u, 12 * u, 'rgba(11,20,51,0.85)', '#f2c23b', 2 * u);
+      this.text(label, x2 + 10 * u, by + 6 * u, size);
+      this.text(tstr2, x2 + w2 - 10 * u, by + 6 * u, 11 * u, 1, left2 < 15 ? 0.5 + 0.5 * Math.sin(this.t * 10) : 0.8);
+      by += 32 * u;
+      const tg = g.missionTarget();
+      if (tg) this.marker(r, tg, '#f2c23b', top);
+    }
+    // evac bus: always labelled, arrow while somebody tags along
+    const ev = g.world.evac;
+    if (ev) {
+      const followers = g.civs.some((c) => c.follow && !c.taken);
+      const [ex, ey] = r.project(ev.x, ev.y, 70);
+      if (ex > 0 && ex < this.W && ey > 0 && ey < this.H) {
+        const t2 = 'EVAC BUS';
+        this.text(t2, ex, ey - 8 * u, 12 * u, 0.5, 0.75 + 0.25 * Math.sin(this.t * 4));
+      } else if (followers) this.edgeArrow(ex, ey, '#5dff8a', top);
+    }
+    // search progress ring over Dale
+    if (g.search) {
+      const [px, py] = r.project(p.x, p.y, 72);
+      const k = g.search.t / g.search.dur;
+      ctx.lineWidth = 6 * u;
+      ctx.strokeStyle = 'rgba(11,20,51,0.8)';
+      ctx.beginPath();
+      ctx.arc(px, py, 14 * u, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.lineWidth = 4 * u;
+      ctx.strokeStyle = '#f2c23b';
+      ctx.beginPath();
+      ctx.arc(px, py, 14 * u, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2);
+      ctx.stroke();
+    }
     // banner
     if (g.banner) this.drawBanner(g.banner);
     // off-screen nest markers
     for (const n of g.nests) {
       const [sx, sy] = r.project(n.x, n.y);
       if (sx > 0 && sx < this.W && sy > 0 && sy < this.H) continue;
-      const ang = Math.atan2(sy - this.H / 2, sx - this.W / 2);
-      const m = 26 * u;
-      const ex = clamp(this.W / 2 + Math.cos(ang) * this.W, m, this.W - m);
-      const ey = clamp(this.H / 2 + Math.sin(ang) * this.H, m + top + 60 * u, this.H - m - 100 * u);
-      ctx.save();
-      ctx.translate(ex, ey);
-      ctx.rotate(ang);
-      ctx.globalAlpha = 0.6 + 0.4 * Math.sin(this.t * 6);
-      ctx.fillStyle = '#c45cff';
-      ctx.strokeStyle = '#0d1a44';
-      ctx.lineWidth = 2 * u;
-      ctx.beginPath();
-      ctx.moveTo(12 * u, 0);
-      ctx.lineTo(-8 * u, -9 * u);
-      ctx.lineTo(-8 * u, 9 * u);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-      ctx.restore();
+      this.edgeArrow(sx, sy, '#c45cff', top);
     }
     // controls
     this.drawControls(g);
+  }
+
+  // Arrow at the screen edge pointing towards something off-screen.
+  edgeArrow(sx, sy, color, top) {
+    const ctx = this.ctx, u = this.u;
+    const ang = Math.atan2(sy - this.H / 2, sx - this.W / 2);
+    const m = 26 * u;
+    const ex = clamp(this.W / 2 + Math.cos(ang) * this.W, m, this.W - m);
+    const ey = clamp(this.H / 2 + Math.sin(ang) * this.H, m + top + 60 * u, this.H - m - 100 * u);
+    ctx.save();
+    ctx.translate(ex, ey);
+    ctx.rotate(ang);
+    ctx.globalAlpha = 0.65 + 0.35 * Math.sin(this.t * 6);
+    ctx.fillStyle = color;
+    ctx.strokeStyle = '#0d1a44';
+    ctx.lineWidth = 2 * u;
+    ctx.beginPath();
+    ctx.moveTo(13 * u, 0);
+    ctx.lineTo(-8 * u, -10 * u);
+    ctx.lineTo(-8 * u, 10 * u);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Bouncing marker over an on-screen target, edge arrow otherwise.
+  marker(r, o, color, top) {
+    const ctx = this.ctx, u = this.u;
+    const [sx, sy] = r.project(o.x, o.y, (o.z || 0) + 110);
+    if (sx < 0 || sx > this.W || sy < 0 || sy > this.H) return this.edgeArrow(sx, sy, color, top);
+    const b = Math.abs(Math.sin(this.t * 5)) * 8 * u;
+    ctx.fillStyle = color;
+    ctx.strokeStyle = '#0d1a44';
+    ctx.lineWidth = 2 * u;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy + 10 * u - b);
+    ctx.lineTo(sx - 9 * u, sy - 6 * u - b);
+    ctx.lineTo(sx + 9 * u, sy - 6 * u - b);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
   }
 
   drawTicker(g, y) {
@@ -425,14 +500,30 @@ export class UI {
       ctx.drawImage(base, a.ox - R * 0.8, a.oy - R * 0.8, R * 1.6, R * 1.6);
       ctx.globalAlpha = 1;
     }
-    // grenade button
+    // grenade button (not while driving - both hands on the wheel)
     const gs = 76 * u;
     const gx = this.W - this.safe.r - 22 * u - gs, gy = this.H - this.safe.b - 34 * u - gs;
-    const down = this.btn('grenade', gx - 10 * u, gy - 10 * u, gs + 20 * u, gs + 20 * u, () => (input.grenade = true), true);
-    const s = down ? 0.92 : 1;
-    this.img('btn_grenade', gx + (gs - gs * s) / 2, gy + (gs - gs * s) / 2, gs * s, gs * s, g.player.grenades > 0 ? 1 : 0.45);
-    this.roundRect(gx + gs - 22 * u, gy - 4 * u, 28 * u, 24 * u, 12 * u, '#c4231b', '#0d1a44', 2 * u);
-    this.text(String(g.player.grenades), gx + gs - 8 * u, gy + 1 * u, 15 * u, 0.5);
+    if (!g.player.car) {
+      const down = this.btn('grenade', gx - 10 * u, gy - 10 * u, gs + 20 * u, gs + 20 * u, () => (input.grenade = true), true);
+      const s = down ? 0.92 : 1;
+      this.img('btn_grenade', gx + (gs - gs * s) / 2, gy + (gs - gs * s) / 2, gs * s, gs * s, g.player.grenades > 0 ? 1 : 0.45);
+      this.roundRect(gx + gs - 22 * u, gy - 4 * u, 28 * u, 24 * u, 12 * u, '#c4231b', '#0d1a44', 2 * u);
+      this.text(String(g.player.grenades), gx + gs - 8 * u, gy + 1 * u, 15 * u, 0.5);
+    }
+    // context action: search / drive / talk / pet / rig / get out
+    const it = g.interact;
+    if (it && !g.over) {
+      const as = 74 * u;
+      const ax = gx + (gs - as) / 2, ay = g.player.car ? gy : gy - as - 40 * u;
+      const down = this.btn('action', ax - 8 * u, ay - 8 * u, as + 16 * u, as + 16 * u, () => (input.action = true), true);
+      const pulse = (down ? 0.92 : 1) * (1 + 0.04 * Math.sin(this.t * 7));
+      const ss = as * pulse;
+      const fast = g.player.car && Math.abs(g.player.car.speed) > 150;
+      this.img(ACTION_ICON[it.kind], ax + (as - ss) / 2, ay + (as - ss) / 2, ss, ss, fast ? 0.5 : 1);
+      const label = ACTION_LABEL[it.kind] + (this.cb.touch() ? '' : ' (E)');
+      const ls = this.fitSize(label, 13 * u, 150 * u);
+      this.text(label, Math.min(ax + as / 2, this.W - this.safe.r - this.font.measure(label, ls) / 2 - 6 * u), ay - 20 * u, ls, 0.5);
+    }
   }
 
   panel(cx, cy, w) {
@@ -471,17 +562,19 @@ export class UI {
     this.text('GAME OVER', cx, top + h * 0.08, this.fitSize('GAME OVER', 34 * u, w * 0.8), 0.5, k);
     const dl = this.font.wrap(g.deathLine, 11 * u, w * 0.78);
     dl.forEach((ln, i) => this.text(ln, cx, top + h * 0.08 + 46 * u + i * 15 * u, 11 * u, 0.5, k * 0.9));
-    const sy = top + h * 0.36;
+    const sy = top + h * 0.33;
     const row = (label, val, y) => {
-      this.text(label, cx - w * 0.36, y, 13 * u, 0, k * 0.8);
-      this.text(val, cx + w * 0.36, y, 17 * u, 1, k);
+      this.text(label, cx - w * 0.36, y, 12 * u, 0, k * 0.8);
+      this.text(val, cx + w * 0.36, y, 16 * u, 1, k);
     };
     row('SURVIVED', fmtTime(g.time), sy);
-    row('KILLS', String(g.kills), sy + 28 * u);
-    row('BEST', fmtTime(this.cb.best()), sy + 56 * u);
+    row('KILLS', String(g.kills), sy + 23 * u);
+    row('RESCUED', String(g.rescued), sy + 46 * u);
+    row('MISSIONS', String(g.missionsDone), sy + 69 * u);
+    row('BEST', fmtTime(this.cb.best()), sy + 92 * u);
     const rk = 'RANK: ' + rank(g.time);
-    this.text(rk, cx, sy + 90 * u, this.fitSize(rk, 15 * u, w * 0.8), 0.5, k);
-    if (this.cb.newRecord()) this.text('NEW RECORD! NOBODY CARES.', cx, sy + 114 * u, this.fitSize('NEW RECORD! NOBODY CARES.', 12 * u, w * 0.8), 0.5, k * (0.6 + 0.4 * Math.sin(this.t * 6)));
+    this.text(rk, cx, sy + 120 * u, this.fitSize(rk, 14 * u, w * 0.8), 0.5, k);
+    if (this.cb.newRecord()) this.text('NEW RECORD! NOBODY CARES.', cx, sy + 142 * u, this.fitSize('NEW RECORD! NOBODY CARES.', 11 * u, w * 0.8), 0.5, k * (0.6 + 0.4 * Math.sin(this.t * 6)));
     const bw = w * 0.66;
     if (g.overT > 1.5) {
       this.wideButton('again', 'TRY AGAIN', cx, top + h * 0.8, bw, () => this.cb.restart());
@@ -523,7 +616,7 @@ export class UI {
       const t = 'BEST: ' + fmtTime(best) + '   ' + rank(best);
       this.text(t, W / 2, H - this.safe.b - 52 * u, this.fitSize(t, 13 * u, W * 0.9), 0.5);
     }
-    const tip = this.cb.touch() ? 'LEFT THUMB MOVES. AIMING IS AUTOMATIC. YOU ARE WELCOME.' : 'WASD MOVES. SPACE THROWS GRENADES. AIMING IS AUTOMATIC.';
+    const tip = this.cb.touch() ? 'LEFT THUMB MOVES. AIMING IS AUTOMATIC. TAP THE BUTTON TO SEARCH, DRIVE, TALK, PET.' : 'WASD MOVES. E INTERACTS. SPACE THROWS GRENADES. AIMING IS AUTOMATIC.';
     this.text(tip, W / 2, H - this.safe.b - 26 * u, this.fitSize(tip, 10 * u, W * 0.92), 0.5, 0.8);
   }
 

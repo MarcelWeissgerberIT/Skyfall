@@ -2,12 +2,13 @@
 import { TILE, rand, randi, pick, clamp, dist2, weighted, screenDirToWorld, worldDirToScreen } from './util.js';
 import { World, N, WORLD } from './world.js';
 import * as L from './lines.js';
+import { InteractMixin } from './interact.js';
 
 export const ENEMY = {
-  grunt: { sprite: 'alien_grunt', hp: 34, speed: 74, r: 13, dmg: 9, size: ['h', 78], drop: 0.15 },
-  crawler: { sprite: 'alien_crawler', hp: 15, speed: 146, r: 12, dmg: 6, size: ['w', 60], drop: 0.08 },
-  spitter: { sprite: 'alien_spitter', hp: 28, speed: 60, r: 13, dmg: 6, size: ['h', 80], drop: 0.2, ranged: true },
-  brute: { sprite: 'alien_brute', hp: 230, speed: 46, r: 27, dmg: 22, size: ['w', 120], drop: 0.75 },
+  grunt: { sprite: 'alien_grunt', hp: 34, speed: 72, r: 10, dmg: 9, size: ['h', 52], drop: 0.15 },
+  crawler: { sprite: 'alien_crawler', hp: 15, speed: 140, r: 9, dmg: 6, size: ['w', 40], drop: 0.08 },
+  spitter: { sprite: 'alien_spitter', hp: 28, speed: 58, r: 10, dmg: 6, size: ['h', 54], drop: 0.2, ranged: true },
+  brute: { sprite: 'alien_brute', hp: 230, speed: 46, r: 20, dmg: 22, size: ['w', 84], drop: 0.75 },
 };
 
 const WEAPONS = {
@@ -34,13 +35,13 @@ export class Game {
     this.world = new World((Math.random() * 1e9) | 0);
     const s = this.world.start;
     this.player = {
-      x: s.x, y: s.y, r: 14, hp: 100, maxHp: 100, shells: 30, grenades: 2,
+      x: s.x, y: s.y, r: 11, hp: 100, maxHp: 100, shells: 30, grenades: 2,
       aimX: 1, aimY: 0, fx: -1, fy: 1, moving: false, walkT: 0, fireCd: 0,
       smgT: 0, plasmaT: 0, invT: 0, hurtT: 0, lastHit: 0, recoil: 0, dead: false,
     };
     this.enemies = [];
     this.civs = [];
-    this.cows = this.world.cows.map((c) => ({ x: c.x, y: c.y, r: 15, vx: 0, vy: 0, t: rand(5), state: 'graze', flip: Math.random() < 0.5, z: 0, rot: 0, scale: 1 }));
+    this.cows = this.world.cows.map((c) => ({ x: c.x, y: c.y, r: 12, vx: 0, vy: 0, t: rand(5), state: 'graze', flip: Math.random() < 0.5, z: 0, rot: 0, scale: 1 }));
     this.pickups = [];
     this.nests = [];
     this.ufos = [];
@@ -82,6 +83,8 @@ export class Game {
     this.tLoneMeteor = 30;
     this.phase = 'day';
     this.milestones = new Set();
+    this.initInteract();
+    this.sound.siren(false);
     this.say(pick(L.INTRO), true);
     for (let i = 0; i < 2; i++) this.vultures.push(this.makeVulture());
     // initial loot so the first minute is not pure misery
@@ -100,8 +103,8 @@ export class Game {
   }
   float(text, x, y, size = 15, life = 1.4) {
     // stack texts that pop up at the same time so they stay readable
-    let z = 60;
-    for (const f of this.floaters) if (f.t < 0.6 && Math.abs(f.x - x) + Math.abs(f.y - y) < 80) z = Math.max(z, f.z + 26);
+    let z = 46;
+    for (const f of this.floaters) if (f.t < 0.6 && Math.abs(f.x - x) + Math.abs(f.y - y) < 80) z = Math.max(z, f.z + 24);
     this.floaters.push({ text, x, y, z, t: 0, life, size });
   }
 
@@ -149,6 +152,7 @@ export class Game {
 
     this.updateDirector(dt, day);
     this.updatePlayer(dt, input);
+    this.updateInteract(dt, input);
     this.world.updateFlow(p.x, p.y);
     this.updateEnemies(dt);
     this.updateCivs(dt);
@@ -347,6 +351,7 @@ export class Game {
       victim.target = true;
       victim.state = 'graze';
       victim.t = 99;
+      if (!this.mission) this.startMissionObj({ type: 'cow', t: 0, limit: 30, count: 0, need: 1, ufo: this.ufos[this.ufos.length - 1] });
     }
   }
 
@@ -405,8 +410,15 @@ export class Game {
     this.pickups.push({ type, x, y, t: 0, life: 22, drop: true, pop: 1 });
   }
 
-  spawnCiv() {
+  spawnCiv(forMission = false) {
     const p = this.player;
+    if (forMission) {
+      const s = this.world.randomSpot(p.x, p.y, 380, 680);
+      if (!s) return null;
+      const c = { type: pick(CIVS), x: s.x, y: s.y, r: 10, vx: 0, vy: 0, t: 0, walkT: 0, panic: rand(1), flip: false, gave: true, life: 999, quipT: rand(3, 6), fade: 1, mission: true };
+      this.civs.push(c);
+      return c;
+    }
     const houses = this.world.props.filter((h) => h.box && h.type.startsWith('house') && dist2(h.x, h.y, p.x, p.y) < 800 * 800 && dist2(h.x, h.y, p.x, p.y) > 250 * 250);
     let s;
     if (houses.length) {
@@ -416,7 +428,7 @@ export class Game {
     if (!s) s = this.world.randomSpot(p.x, p.y, 300, 600);
     if (!s) return;
     const type = Math.random() < 0.25 ? 'civ_tinfoil' : pick(CIVS.slice(0, 2));
-    this.civs.push({ type, x: s.x, y: s.y, r: 12, vx: 0, vy: 0, t: 0, walkT: 0, panic: rand(1), flip: false, gave: false, life: 45, quipT: rand(3, 6), fade: 1 });
+    this.civs.push({ type, x: s.x, y: s.y, r: 10, vx: 0, vy: 0, t: 0, walkT: 0, panic: rand(1), flip: false, gave: false, life: 45, quipT: rand(3, 6), fade: 1 });
     if (Math.random() < 0.4) this.say(pick(L.CIV_SPAWN));
   }
 
@@ -455,6 +467,7 @@ export class Game {
     p.plasmaT = Math.max(0, p.plasmaT - dt);
     p.lastHit += dt;
     if (p.lastHit > 5 && p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + 1.4 * dt);
+    if (p.car) return this.updateCar(dt, input);
 
     // movement
     const [wx, wy] = screenDirToWorld(input.mx, input.my);
@@ -585,6 +598,14 @@ export class Game {
 
   hurtPlayer(dmg, fromX, fromY, knock = 0) {
     const p = this.player;
+    if (p.car) {
+      // the cruiser takes the beating instead
+      if (p.car.invT <= 0) {
+        p.car.invT = 0.15;
+        this.damageCar(dmg);
+      }
+      return;
+    }
     if (p.invT > 0 || this.over) return;
     p.hp -= dmg;
     p.invT = 0.35;
@@ -612,6 +633,7 @@ export class Game {
     p.dead = true;
     this.over = true;
     this.overT = 0;
+    this.sound.siren(false);
     this.deathLine = pick(L.DEATH);
     this.sound.play('over');
     this.explode(p.x, p.y, 0, false, true);
@@ -706,7 +728,7 @@ export class Game {
       const sdx = worldDirToScreen(e.vx, e.vy)[0];
       if (Math.abs(sdx) > 5) e.flip = sdx > 0;
       // melee
-      const reach = e.r + (tgt.r || 14) + 4;
+      const reach = e.r + (e.target ? tgt.r : p.car ? p.car.r : p.r) + 4;
       if (d < reach && e.atkCd <= 0) {
         e.atkCd = 0.85;
         if (e.target) this.takeCiv(e.target);
@@ -752,10 +774,27 @@ export class Game {
       c.t += dt;
       if (c.taken) {
         c.fade -= dt * 1.5;
-        c.z = (c.z || 0) + dt * 220;
+        if (c.taken === 'probed') c.z = (c.z || 0) + dt * 220;
         continue;
       }
       c.life -= dt;
+      c.yell = (c.yell || 0) - dt;
+      if (c.follow) {
+        // tag along behind Dale; the evac bus takes it from there
+        const dx = p.x - c.x, dy = p.y - c.y, d = Math.hypot(dx, dy) || 1;
+        const sp = d > 220 ? 210 : d > 45 ? 150 : 0;
+        c.vx = (dx / d) * sp;
+        c.vy = (dy / d) * sp;
+        c.x += c.vx * dt;
+        c.y += c.vy * dt;
+        if (sp) c.walkT += dt;
+        w.collide(c);
+        const sdx = worldDirToScreen(c.vx, c.vy)[0];
+        if (Math.abs(sdx) > 5) c.flip = sdx > 0;
+        const ev = w.evac;
+        if (ev && dist2(c.x, c.y, ev.x, ev.y) < 150 * 150) this.rescueCiv(c);
+        continue;
+      }
       // run away from the nearest alien, otherwise towards the player-ish
       let ax = 0, ay = 0;
       for (const e of this.enemies) {
@@ -772,17 +811,23 @@ export class Game {
         c.wx = rand(-1, 1);
         c.wy = rand(-1, 1);
       }
-      let mx = ax + c.wx * 80, my = ay + c.wy * 80;
-      const l = Math.hypot(mx, my) || 1;
-      const sp = c.type === 'civ_tinfoil' ? 95 : 120;
-      c.vx = (mx / l) * sp;
-      c.vy = (my / l) * sp;
-      c.x += c.vx * dt;
-      c.y += c.vy * dt;
-      c.walkT += dt;
-      w.collide(c);
-      const sdx = worldDirToScreen(c.vx, c.vy)[0];
-      if (Math.abs(sdx) > 5) c.flip = sdx > 0;
+      // nobody is chasing them and Dale is close: stop and wait to be talked to
+      if (Math.abs(ax) + Math.abs(ay) < 1 && dist2(c.x, c.y, p.x, p.y) < 120 * 120) {
+        c.vx = c.vy = 0;
+        c.flip = worldDirToScreen(p.x - c.x, p.y - c.y)[0] > 0;
+      } else {
+        const mx = ax + c.wx * 80, my = ay + c.wy * 80;
+        const l = Math.hypot(mx, my) || 1;
+        const sp = c.type === 'civ_tinfoil' ? 95 : 120;
+        c.vx = (mx / l) * sp;
+        c.vy = (my / l) * sp;
+        c.x += c.vx * dt;
+        c.y += c.vy * dt;
+        c.walkT += dt;
+        w.collide(c);
+        const sdx = worldDirToScreen(c.vx, c.vy)[0];
+        if (Math.abs(sdx) > 5) c.flip = sdx > 0;
+      }
       if (c.type === 'civ_tinfoil') {
         c.quipT -= dt;
         if (c.quipT <= 0) {
@@ -913,6 +958,7 @@ export class Game {
     this.sound.play('hit');
     if (u.hp <= 0 && !u.dead) {
       u.dead = true;
+      if (this.mission && this.mission.type === 'cow' && this.mission.ufo === u) this.completeMission();
       this.explode(u.x, u.y, 60, true);
       this.say(pick(['SAUCER DOWN! THAT ONE WAS A RENTAL.', 'YOU SHOT DOWN A UFO. THE X-FILES WANTS YOUR NUMBER.']), true);
       this.drop(u.x, u.y, 1);
@@ -1082,7 +1128,7 @@ export class Game {
         b.life = 0;
         continue;
       }
-      if (dist2(b.x, b.y, p.x, p.y) < (p.r + (b.big ? 10 : 6)) ** 2) {
+      if (dist2(b.x, b.y, p.x, p.y) < ((p.car ? p.car.r : p.r) + (b.big ? 10 : 6)) ** 2) {
         b.life = 0;
         this.hurtPlayer(b.dmg, b.x, b.y, 4);
       }
@@ -1307,3 +1353,5 @@ function pushOut(e, x, y, r) {
 }
 
 export { PICKUPS, WEAPONS, N };
+
+Object.assign(Game.prototype, InteractMixin);
