@@ -30,23 +30,27 @@ export const PROP_DEFS = {
   car_sheriff: { box: [0.9, 1.75], drawW: 134 },
   car_wreck: { box: [0.9, 1.75], drawW: 132 },
   water_tower: { circle: 22, drawH: 250, base: 0.02 },
-  joshua_tree: { circle: 9, drawH: 122, base: 0.03, sway: 0.025 },
-  palm: { circle: 8, drawH: 196, base: 0.01, sway: 0.05 },
+  joshua_tree: { circle: 9, drawH: 122, base: 0.03, sway: 0.025, breakable: 9000 },
+  palm: { circle: 8, drawH: 196, base: 0.01, sway: 0.05, breakable: 3500 },
   rocks: { circle: 34, drawW: 104, base: 0.22 },
-  shrub: { drawW: 44, base: 0.2, sway: 0.06 },
-  flamingo: { drawH: 42, base: 0.04, sway: 0.09 },
-  bin_mailbox: { circle: 11, drawW: 46, base: 0.08 },
-  hydrant: { circle: 6, drawH: 26, base: 0.05 },
-  streetlight: { circle: 5, drawH: 150, base: 0.02, light: true },
+  shrub: { circle: 6, drawW: 44, base: 0.2, sway: 0.06, breakable: 15, soft: true },
+  flamingo: { circle: 5, drawH: 42, base: 0.04, sway: 0.09, breakable: 49, soft: true },
+  bin_mailbox: { circle: 11, drawW: 46, base: 0.08, breakable: 180 },
+  hydrant: { circle: 6, drawH: 26, base: 0.05, breakable: 2500 },
+  streetlight: { circle: 5, drawH: 150, base: 0.02, light: true, breakable: 4200 },
   sandbags: { circle: 26, drawW: 104, base: 0.3 },
   bus: { box: [2.7, 1.0], drawW: 236 },
-  car_parked: { circle: 30, drawW: 134, base: 0.32 },
+};
+
+// Prop type -> [front points along +x when unflipped, vehicle type]
+const DRIVABLE = {
+  car_police: [true, 'police'], car_minivan: [true, 'minivan'], car_sheriff: [false, 'sheriff'], car_pickup: [false, 'pickup'],
 };
 
 // What you find when you rummage through things, and what you can drive.
 const SEARCH_KIND = {
   house_a: 'house', house_b: 'house', house_c: 'house', store: 'store', trailer: 'trailer',
-  car_minivan: 'car', car_pickup: 'car', car_sheriff: 'car', car_wreck: 'car', bin_mailbox: 'bin',
+  car_wreck: 'car', bin_mailbox: 'bin',
 };
 
 export class World {
@@ -63,6 +67,7 @@ export class World {
     this.dashes = [];
     this.lootSpots = [];
     this.cows = [];
+    this.parkedCars = [];
     this.flow = new Uint16Array(N * N);
     this.flowSrc = -1;
     this.queue = new Int32Array(N * N);
@@ -124,6 +129,7 @@ export class World {
     this.genDesert();
     this.genDashes();
     this.genPatches();
+    this.genRoadGraph();
     this.finalize();
   }
 
@@ -143,6 +149,15 @@ export class World {
 
   addProp(type, x, y, flip = false, decorOnly = false) {
     const def = PROP_DEFS[type];
+    const vt = DRIVABLE[type];
+    if (vt && !decorOnly && x >= 0 && y >= 0 && x < N * TILE && y < N * TILE) {
+      // drivable cars are simulated as vehicles; remember where they are parked
+      const [nativeX, ] = vt;
+      let h = (nativeX ? 0 : Math.PI / 2) + (flip ? (nativeX ? Math.PI / 2 : -Math.PI / 2) : 0);
+      if (this.rnd() < 0.5) h += Math.PI;
+      this.parkedCars.push({ type: vt[1], x, y, h });
+      return null;
+    }
     const p = { type, sprite: type, x, y, flip, def, depth: x + y };
     if (def.box) {
       let [bw, bh] = def.box;
@@ -162,8 +177,8 @@ export class World {
     this.props.push(p);
     if (p.box || p.circle) this.registerCollider(p);
     if (SEARCH_KIND[type]) p.search = SEARCH_KIND[type];
-    if (type === 'car_police') p.drivable = true;
     if (type === 'gas_station') p.riggable = true;
+    if (def.breakable) p.breakable = def.breakable;
     return p;
   }
 
@@ -193,18 +208,6 @@ export class World {
         this.blocked[k] = blocked;
       }
     this.flowSrc = -1;
-  }
-
-  // Put a car back into the world after a joyride (any heading -> round collider).
-  parkCar(x, y, sprite, flip, drawW, base) {
-    const p = this.addProp('car_parked', x, y, flip);
-    p.sprite = sprite;
-    p.drawW = drawW;
-    p.base = base;
-    p.drivable = true;
-    p.depth = x + y;
-    this.flowSrc = -1;
-    return p;
   }
 
   registerCollider(p) {
@@ -399,6 +402,37 @@ export class World {
     });
   }
 
+  // Intersections of the road grid (+ highway exits) for the panicking traffic.
+  genRoadGraph() {
+    const nodes = (this.roadNodes = []);
+    const at = new Map();
+    const add = (i, j, exit = false) => {
+      const k = i * 1000 + j;
+      if (!at.has(k)) {
+        at.set(k, nodes.length);
+        nodes.push({ x: i * TILE, y: j * TILE, nbr: [], exit });
+      }
+      return at.get(k);
+    };
+    const lines = ROADS.map((r) => r + 1);
+    const link = (a, b) => {
+      nodes[a].nbr.push(b);
+      nodes[b].nbr.push(a);
+    };
+    for (let a = 0; a < lines.length; a++)
+      for (let b = 0; b < lines.length; b++) {
+        const n = add(lines[a], lines[b]);
+        if (a > 0) link(n, add(lines[a - 1], lines[b]));
+        if (b > 0) link(n, add(lines[a], lines[b - 1]));
+      }
+    for (const h of HIGHWAYS.map((r) => r + 1)) {
+      link(add(h, lines[0]), add(h, 1, true));
+      link(add(h, lines[lines.length - 1]), add(h, N - 1, true));
+      link(add(lines[0], h), add(1, h, true));
+      link(add(lines[lines.length - 1], h), add(N - 1, h, true));
+    }
+  }
+
   genPatches() {
     this.patches = [];
     for (let j = -14; j < N + 14; j += 1)
@@ -495,6 +529,7 @@ export class World {
           const p = list[n];
           if (p.stamp === stamp) continue;
           p.stamp = stamp;
+          if (p.def.soft) continue;
           if (p.box) {
             const b = p.box;
             const nx = Math.max(b.x0, Math.min(e.x, b.x1));

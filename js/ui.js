@@ -2,13 +2,14 @@
 import { clamp, fmtTime } from './util.js';
 import { THREAT, MISSIONS, rank } from './lines.js';
 import { ACTION_LABEL, ACTION_ICON } from './interact.js';
+import { fmtNum } from './vehicles.js';
 
 export const STORY = [
   { video: 'couch', lines: ['1957. EARTH STARTS BROADCASTING TELEVISION INTO SPACE.', 'SEVENTY YEARS LATER, SOMEBODY OUT THERE FINALLY BINGED ALL OF IT.'] },
   { video: 'space', lines: ['THE REVIEWS ARE IN: ONE STAR.', 'TOO MANY COOKING SHOWS. THE COWS WERE THE ONLY GOOD CHARACTERS.', 'EARTH HAS BEEN CANCELLED.'] },
   { video: 'town', lines: ['PINE BLUFF, NEVADA. POPULATION 1,204.', 'FOR NOW.'] },
   { video: 'cow', lines: ['THE COWS GOT A SPIN-OFF.', 'EVERYBODY ELSE GETS PROBED.'] },
-  { video: 'dale', lines: ['MEET DALE. DIVORCED. OWNS A SHOTGUN. HAD NO PLANS FOR TUESDAY.', 'SURVIVE AS LONG AS YOU CAN. NOBODY IS COMING. NOBODY WAS EVER COMING.'] },
+  { video: 'dale', lines: ['MEET DALE. DIVORCED. HIS SHOTGUN WAS NEVER LOADED. HAD NO PLANS FOR TUESDAY.', 'BUT HE KNOWS WHERE THE SHERIFF LEAVES HIS KEYS.', 'SAVE WHO YOU CAN. NOBODY IS COMING. NOBODY WAS EVER COMING.'] },
 ];
 
 export class Input {
@@ -31,7 +32,8 @@ export class Input {
     window.addEventListener('pointercancel', (e) => this.up(e), opts);
     window.addEventListener('keydown', (e) => {
       this.keys.add(e.code);
-      if (e.code === 'Space' || e.code === 'KeyG') this.grenade = true;
+      if (e.code === 'Space' || e.code === 'KeyH') this.honk = true;
+      if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyQ') this.boost = true;
       if (e.code === 'KeyE' || e.code === 'KeyF') this.action = true;
       if (e.code === 'Escape' || e.code === 'KeyP') this.ui.onPauseKey();
       if (e.code === 'Enter') this.ui.onEnter();
@@ -54,8 +56,8 @@ export class Input {
     const x = e.clientX, y = e.clientY;
     if (this.ui.press(x, y, e.pointerId)) return;
     if (this.ui.state !== 'play') return;
-    if (x < this.ui.W * 0.55 && !this.joy) this.joy = { id: e.pointerId, ox: x, oy: y, x, y };
-    else if (!this.aimP) this.aimP = { id: e.pointerId, ox: x, oy: y, x, y };
+    // the floating joystick works anywhere that is not a button
+    if (!this.joy) this.joy = { id: e.pointerId, ox: x, oy: y, x, y };
   }
   move(e) {
     if (this.joy && e.pointerId === this.joy.id) {
@@ -110,8 +112,9 @@ export class Input {
         this.ay = dy;
       }
     }
-    const out = { mx: this.mx, my: this.my, aim: this.aim, ax: this.ax, ay: this.ay, grenade: this.grenade, action: this.action };
-    this.grenade = false;
+    const out = { mx: this.mx, my: this.my, action: this.action, honk: this.honk, boost: this.boost };
+    this.honk = false;
+    this.boost = false;
     this.action = false;
     return out;
   }
@@ -291,35 +294,37 @@ export class UI {
     const ctx = this.ctx, u = this.u, p = g.player;
     const pad = 12 * u;
     const top = this.safe.t + pad, left = this.safe.l + pad, right = this.W - this.safe.r - pad;
-    // row 1: health (left), kills + pause (right)
+    // row 1: Dale's health (left), rescued + pause (right)
     const beat = p.hp < 30 ? 1 + Math.max(0, Math.sin(this.t * 9)) * 0.18 : 1;
     const hs = 34 * u * beat;
     this.img('icon_heart', left + 17 * u - hs / 2, top + 16 * u - hs / 2, hs);
     const ps = 40 * u;
-    const ks = String(g.kills);
+    const ks = String(g.rescued);
     const kw = this.font.measure(ks, 18 * u);
-    const killsX = right - ps - 12 * u - kw - 24 * u;
-    const barW = Math.min(130 * u, killsX - left - 52 * u);
+    const resX = right - ps - 12 * u - kw - 26 * u;
+    const barW = Math.min(130 * u, resX - left - 52 * u);
     this.bar(left + 40 * u, top + 9 * u, barW, 14 * u, p.hp / p.maxHp, '#b3121b', '#ff5b4a');
     const pdown = this.btn('pause', right - ps, top, ps, ps, () => this.cb.pause(), true);
     this.img('btn_pause', right - ps * (pdown ? 0.95 : 1), top, ps * (pdown ? 0.9 : 1));
     this.text(ks, right - ps - 8 * u - kw, top + 10 * u, 18 * u);
-    this.img('icon_skull', killsX, top + 4 * u, 21 * u);
-    // row 2: ammo (left), clock + threat (centre)
+    this.img('icon_seat', resX, top + 3 * u, 23 * u);
+    // row 2: car / fuel (left), clock + threat (centre), damage (right)
     const ay = top + 42 * u;
-    if (p.car) {
-      this.img('btn_drive', left + 2 * u, ay, 28 * u);
-      this.text('CRUISER', left + 38 * u, ay + 1 * u, 13 * u);
-      this.bar(left + 38 * u, ay + 19 * u, 70 * u, 7 * u, p.car.hp / p.car.maxHp, '#1b5fc7', '#7fb4ff');
-    } else this.img('icon_ammo', left + 2 * u, ay, 28 * u);
-    if (p.car) {
-      // the cruiser row replaces the ammo readout
-    } else if (p.plasmaT > 0 || p.smgT > 0) {
-      const pl = p.plasmaT > 0;
-      this.text(pl ? 'PLASMA' : 'SMG', left + 38 * u, ay + 1 * u, 13 * u);
-      this.bar(left + 38 * u, ay + 19 * u, 60 * u, 7 * u, pl ? p.plasmaT / 12 : p.smgT / 18, pl ? '#a0169c' : '#c7841b', pl ? '#ff6af0' : '#ffd36a');
-    } else if (p.shells > 0) this.text(String(p.shells), left + 38 * u, ay + 5 * u, 19 * u);
-    else this.text('REVOLVER', left + 38 * u, ay + 8 * u, 12 * u, 0, 0.6 + 0.4 * Math.sin(this.t * 6));
+    const c = p.car;
+    if (c) {
+      this.img('btn_drive', left + 2 * u, ay - 2 * u, 22 * u);
+      this.bar(left + 30 * u, ay + 4 * u, 70 * u, 7 * u, c.hp / c.maxHp, '#1b5fc7', '#7fb4ff');
+      this.img('icon_fuel', left + 4 * u, ay + 18 * u, 18 * u);
+      const low = c.fuel < c.maxFuel * 0.15;
+      this.bar(left + 30 * u, ay + 23 * u, 70 * u, 7 * u, c.fuel / c.maxFuel, low ? '#b3121b' : '#c7841b', low ? '#ff5b4a' : '#ffd36a');
+      // seats: who is in the car
+      for (let i = 0; i < c.V.seats; i++) this.img('icon_seat', left + 2 * u + i * 15 * u, ay + 38 * u, 13 * u, undefined, i < c.seats.length ? 1 : 0.28);
+    } else {
+      this.img('icon_fuel', left + 4 * u, ay, 22 * u);
+      this.text('X' + p.cans, left + 30 * u, ay + 5 * u, 15 * u, 0, p.cans ? 1 : 0.5);
+      const follow = g.civs.filter((v) => v.follow && !v.taken).length;
+      if (follow) this.text(follow + ' FOLLOWING', left + 4 * u, ay + 28 * u, 10 * u, 0, 0.85);
+    }
     const cx = this.W / 2;
     const ts = 22 * u;
     const tstr = fmtTime(g.time);
@@ -327,16 +332,20 @@ export class UI {
     this.img('icon_clock', cx - tw / 2 - 14 * u, ay + 1 * u, 20 * u);
     this.text(tstr, cx - tw / 2 + 12 * u, ay + 3 * u, ts);
     const th = THREAT[g.level].name;
-    const thSize = this.fitSize(th, 10 * u, this.W * 0.4);
+    const thSize = this.fitSize(th, 10 * u, this.W * 0.36);
     this.text(th, cx + 6 * u, ay + 30 * u, thSize, 0.5, 0.85);
+    const dmg = fmtNum(g.damage);
+    this.text('DAMAGE', right, ay + 2 * u, 9 * u, 1, 0.75);
+    this.text(dmg, right, ay + 15 * u, this.fitSize(dmg, 14 * u, this.W * 0.26), 1);
     // ticker
-    const tickY = top + 88 * u;
+    const tickY = top + (p.car ? 104 : 90) * u;
     this.drawTicker(g, tickY);
     // mothership health
     let by = tickY + (g.tickerCur ? 52 * u : 0);
-    if (g.mother && g.mother.state !== 'leave') {
-      this.text('THE NETWORK EXECUTIVE', cx, by, 11 * u, 0.5);
-      this.bar(cx - 100 * u, by + 15 * u, 200 * u, 9 * u, g.mother.hp / g.mother.maxHp, '#6d0f8c', '#e45cff');
+    if (g.mother && g.mother.state === 'fight') {
+      const lt = 'MEETING WITH THE NETWORK EXECUTIVE: ' + fmtTime(g.mother.leaveT);
+      this.text(lt, cx, by, this.fitSize(lt, 11 * u, this.W * 0.9), 0.5);
+      this.bar(cx - 100 * u, by + 15 * u, 200 * u, 9 * u, g.mother.leaveT / 60, '#6d0f8c', '#e45cff');
       by += 34 * u;
     }
     // current dispatcher mission
@@ -494,35 +503,36 @@ export class UI {
       ctx.drawImage(knob, ox - R * 0.55, oy - R * 0.55, R * 1.1, R * 1.1);
       ctx.globalAlpha = 1;
     }
-    if (input.aimP) {
-      const a = input.aimP;
-      ctx.globalAlpha = 0.35;
-      ctx.drawImage(base, a.ox - R * 0.8, a.oy - R * 0.8, R * 1.6, R * 1.6);
-      ctx.globalAlpha = 1;
+    const p = g.player, c = p.car;
+    const bs = 80 * u;
+    const bx = this.W - this.safe.r - 20 * u - bs, by = this.H - this.safe.b - 30 * u - bs;
+    if (c) {
+      // horn: scares saucers, startles aliens, calls survivors over
+      const hdown = this.btn('honk', bx - 8 * u, by - 8 * u, bs + 16 * u, bs + 16 * u, () => (input.honk = true), true);
+      const hs = bs * (hdown ? 0.9 : 1);
+      this.img('btn_honk', bx + (bs - hs) / 2, by + (bs - hs) / 2, hs, hs);
+      this.text('HONK', bx + bs / 2, by - 16 * u, 12 * u, 0.5, 0.85);
+      // nitro
+      const ns = 62 * u;
+      const nx = bx - ns - 18 * u, ny = by + bs - ns;
+      const ndown = this.btn('boost', nx - 6 * u, ny - 6 * u, ns + 12 * u, ns + 12 * u, () => (input.boost = true), true);
+      const nss = ns * (ndown ? 0.9 : 1) * (c.boostT > 0 ? 1.08 : 1);
+      this.img('btn_boost', nx + (ns - nss) / 2, ny + (ns - nss) / 2, nss, nss, p.nitro > 0 ? 1 : 0.4);
+      this.roundRect(nx + ns - 20 * u, ny - 4 * u, 26 * u, 22 * u, 11 * u, '#c4231b', '#0d1a44', 2 * u);
+      this.text(String(p.nitro), nx + ns - 7 * u, ny, 14 * u, 0.5);
     }
-    // grenade button (not while driving - both hands on the wheel)
-    const gs = 76 * u;
-    const gx = this.W - this.safe.r - 22 * u - gs, gy = this.H - this.safe.b - 34 * u - gs;
-    if (!g.player.car) {
-      const down = this.btn('grenade', gx - 10 * u, gy - 10 * u, gs + 20 * u, gs + 20 * u, () => (input.grenade = true), true);
-      const s = down ? 0.92 : 1;
-      this.img('btn_grenade', gx + (gs - gs * s) / 2, gy + (gs - gs * s) / 2, gs * s, gs * s, g.player.grenades > 0 ? 1 : 0.45);
-      this.roundRect(gx + gs - 22 * u, gy - 4 * u, 28 * u, 24 * u, 12 * u, '#c4231b', '#0d1a44', 2 * u);
-      this.text(String(g.player.grenades), gx + gs - 8 * u, gy + 1 * u, 15 * u, 0.5);
-    }
-    // context action: search / drive / talk / pet / rig / get out
+    // context action: drive / carjack / talk / pet / search / rig / get out
     const it = g.interact;
     if (it && !g.over) {
-      const as = 74 * u;
-      const ax = gx + (gs - as) / 2, ay = g.player.car ? gy : gy - as - 40 * u;
+      const as = c ? 58 * u : bs;
+      const ax = c ? bx + (bs - as) / 2 : bx, ay = c ? by - as - 40 * u : by;
       const down = this.btn('action', ax - 8 * u, ay - 8 * u, as + 16 * u, as + 16 * u, () => (input.action = true), true);
       const pulse = (down ? 0.92 : 1) * (1 + 0.04 * Math.sin(this.t * 7));
       const ss = as * pulse;
-      const fast = g.player.car && Math.abs(g.player.car.speed) > 150;
-      this.img(ACTION_ICON[it.kind], ax + (as - ss) / 2, ay + (as - ss) / 2, ss, ss, fast ? 0.5 : 1);
+      this.img(ACTION_ICON[it.kind], ax + (as - ss) / 2, ay + (as - ss) / 2, ss, ss);
       const label = ACTION_LABEL[it.kind] + (this.cb.touch() ? '' : ' (E)');
       const ls = this.fitSize(label, 13 * u, 150 * u);
-      this.text(label, Math.min(ax + as / 2, this.W - this.safe.r - this.font.measure(label, ls) / 2 - 6 * u), ay - 20 * u, ls, 0.5);
+      this.text(label, Math.min(ax + as / 2, this.W - this.safe.r - this.font.measure(label, ls) / 2 - 6 * u), ay - 18 * u, ls, 0.5);
     }
   }
 
@@ -568,10 +578,11 @@ export class UI {
       this.text(val, cx + w * 0.36, y, 16 * u, 1, k);
     };
     row('SURVIVED', fmtTime(g.time), sy);
-    row('KILLS', String(g.kills), sy + 23 * u);
-    row('RESCUED', String(g.rescued), sy + 46 * u);
-    row('MISSIONS', String(g.missionsDone), sy + 69 * u);
-    row('BEST', fmtTime(this.cb.best()), sy + 92 * u);
+    row('RESCUED', String(g.rescued), sy + 19 * u);
+    row('ALIENS SPLATTED', String(g.kills), sy + 38 * u);
+    row('PROPERTY DAMAGE', fmtNum(g.damage), sy + 57 * u);
+    row('MISSIONS', String(g.missionsDone), sy + 76 * u);
+    row('BEST', fmtTime(this.cb.best()), sy + 95 * u);
     const rk = 'RANK: ' + rank(g.time);
     this.text(rk, cx, sy + 120 * u, this.fitSize(rk, 14 * u, w * 0.8), 0.5, k);
     if (this.cb.newRecord()) this.text('NEW RECORD! NOBODY CARES.', cx, sy + 142 * u, this.fitSize('NEW RECORD! NOBODY CARES.', 11 * u, w * 0.8), 0.5, k * (0.6 + 0.4 * Math.sin(this.t * 6)));
@@ -616,7 +627,7 @@ export class UI {
       const t = 'BEST: ' + fmtTime(best) + '   ' + rank(best);
       this.text(t, W / 2, H - this.safe.b - 52 * u, this.fitSize(t, 13 * u, W * 0.9), 0.5);
     }
-    const tip = this.cb.touch() ? 'LEFT THUMB MOVES. AIMING IS AUTOMATIC. TAP THE BUTTON TO SEARCH, DRIVE, TALK, PET.' : 'WASD MOVES. E INTERACTS. SPACE THROWS GRENADES. AIMING IS AUTOMATIC.';
+    const tip = this.cb.touch() ? 'THUMB STEERS. GET IN A CAR. HONK A LOT. SAVE PEOPLE. BREAK THINGS.' : 'WASD DRIVES. E GETS IN AND OUT. SPACE HONKS. SHIFT IS NITRO.';
     this.text(tip, W / 2, H - this.safe.b - 26 * u, this.fitSize(tip, 10 * u, W * 0.92), 0.5, 0.8);
   }
 

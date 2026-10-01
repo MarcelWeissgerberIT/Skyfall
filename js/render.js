@@ -2,14 +2,14 @@
 import { C, TILE, clamp, rand, dist2 } from './util.js';
 import { TT } from './world.js';
 import { PICKUP_SPRITE } from './game.js';
-import { carSprite } from './interact.js';
+import { carSprite } from './vehicles.js';
 
 // figure sizes (screen units at zoom 1) - small, like real model-railway people
-const SIZE = { player: 50, civ: 44, cow: 58, pickup: 34, core: 22 };
+const SIZE = { player: 50, civ: 44, cow: 58, pickup: 34, core: 22, dog: 34 };
 
 const TEX_SCALE = { sand: 0.375, dirt: 0.375, grass: 0.22, concrete: 0.25, asphalt: 0.3 };
 const TEX_OF = ['sand', 'dirt', 'grass', 'concrete', 'asphalt'];
-const PICKUP_GLOW = { ammo: 'yellow', medkit: 'red', grenades: 'orange', smg: 'yellow', core: 'magenta' };
+const PICKUP_GLOW = { fuel: 'orange', repair: 'yellow', medkit: 'red', nitro: 'magenta' };
 const COLORS = {
   yellow: [255, 214, 120], orange: [255, 140, 50], red: [255, 70, 70], magenta: [255, 60, 220],
   cyan: [90, 230, 255], violet: [170, 90, 255], warm: [255, 200, 130], blue: [70, 120, 255], white: [255, 255, 255], green: [90, 255, 140],
@@ -98,10 +98,10 @@ export class Renderer {
     }
     const ctx = this.ctx, dpr = this.dpr, z = this.zoom;
     const p = g.player;
-    // camera follows the player with a little lead
-    const lead = 40;
+    // camera follows the player and looks ahead in the direction of travel (same iso view always)
+    const lead = p.car ? Math.min(240, Math.abs(p.car.speed) * 0.55) : 40;
     const tx = p.x + p.fx * lead * (p.moving ? 1 : 0), ty = p.y + p.fy * lead * (p.moving ? 1 : 0);
-    const k = 1 - Math.pow(0.0008, dt);
+    const k = 1 - Math.pow(p.car ? 0.0003 : 0.0008, dt);
     this.cam.x += (tx - this.cam.x) * k;
     this.cam.y += (ty - this.cam.y) * k;
     if (!this.camInit) {
@@ -113,6 +113,17 @@ export class Renderer {
     const shx = sh ? rand(-sh, sh) : 0, shy = sh ? rand(-sh, sh) : 0;
     this.ox = this.W / 2 - (this.cam.x - this.cam.y) * C * z + shx;
     this.oy = this.H * 0.54 - (this.cam.x + this.cam.y) * C * 0.5 * z + shy;
+    const [px, py] = this.project(p.x, p.y);
+    const mx = this.W * 0.22, my = this.H * 0.24;
+    const cx = px < mx ? px - mx : px > this.W - mx ? px - (this.W - mx) : 0;
+    const cy = py < my ? py - my : py > this.H - my ? py - (this.H - my) : 0;
+    if (cx || cy) {
+      this.ox -= cx;
+      this.oy -= cy;
+      const [wx, wy] = this.unproject(this.W / 2, this.H * 0.54);
+      this.cam.x = wx;
+      this.cam.y = wy;
+    }
     this.dark = g.darkness || 0;
     this.lights.length = 0;
 
@@ -328,7 +339,6 @@ export class Renderer {
     if (g.mother) blob(g.mother.x, g.mother.y, 230, 0.5);
     for (const n of g.nests) if (n.land < 1) blob(n.x, n.y, 70 * n.land + 20, 0.5 * n.land);
     for (const v of g.vultures) blob(v.x + 60, v.y + 60, 26, 0.18);
-    for (const gr of g.grenades) blob(gr.x, gr.y, 9, 0.4);
     for (const t of g.tumbleweeds) blob(t.x, t.y, 18, 0.3);
     ctx.globalAlpha = 1;
     // UFO beams light up the ground
@@ -405,11 +415,13 @@ export class Renderer {
     for (const k of g.pickups) add(4, k);
     for (const n of g.nests) add(5, n);
     for (const t of g.tumbleweeds) add(6, t);
-    for (const gr of g.grenades) add(7, gr);
     for (const f of g.fx) if (f.type === 'corpse') add(8, f);
-    if (g.player.car) add(10, g.player.car);
-    else if (!g.player.dead) add(9, g.player);
-    this.interactTarget = g.interact && g.interact.kind !== 'exit' ? g.interact.o : null;
+    for (const c of g.cars) add(10, c);
+    for (const d of g.debris) add(11, d);
+    if (g.dog) add(12, g.dog);
+    if (!g.player.car && !g.player.dead) add(9, g.player);
+    this.interactTarget = g.interact && g.interact.kind !== 'exit' && g.interact.kind !== 'bail' ? g.interact.o : null;
+    this.flash = null;
     objs.sort((a, b) => a.d - b.d);
 
     // shadows first so they never cover sprites
@@ -440,10 +452,12 @@ export class Renderer {
       case 2: key = o.type; [w, h] = this.sizeH(o.type, SIZE.civ); ay = 0.97; flip = o.flip; if (o.taken) return; break;
       case 3: key = 'cow'; [w, h] = this.sizeW('cow', SIZE.cow); ay = 0.88; flip = o.flip; if (o.z > 2) return; break;
       case 10: {
-        const c = carSprite(o.h);
+        if (o.lift > 0.05) return;
+        const c = carSprite(o);
         key = c.key; [w, h] = this.sizeW(c.key, c.w); ay = 1 - c.base; flip = c.flip;
         break;
       }
+      case 12: key = 'dog'; [w, h] = this.sizeW('dog', SIZE.dog); ay = 0.9; flip = o.flip; break;
       case 9: {
         const s = this.playerSprite(o);
         key = s.key; w = s.w; h = s.h; ay = 0.97; flip = s.flip;
@@ -588,6 +602,12 @@ export class Renderer {
           this.glow(ph ? 'red' : 'blue', lx, ly, 34 * z, 0.45 + night * 0.5);
           if (night > 0.1) this.addLight(it.sx, it.sy, 90, 0.5 * night);
         }
+        if (night > 0.15 && o.type.startsWith('house') && !o.burning) {
+          // somebody left the lights on
+          const fl = (Math.sin(t * 0.7 + o.x) > -0.8 ? 1 : 0.3) * night;
+          this.glow('warm', it.sx + (o.flip ? 18 : -18) * z, it.sy - gm.h * 0.28 * z, 34 * z, fl * 0.55);
+          this.addLight(it.sx, it.sy - gm.h * 0.25 * z, 120, fl * 0.6);
+        }
         if (o.burning) {
           const fl = 0.75 + Math.random() * 0.25;
           this.glow('orange', it.sx, it.sy - 30 * z, 110 * z, (0.25 + night * 0.5) * fl);
@@ -667,17 +687,6 @@ export class Renderer {
         this.sprite('tumbleweed', it.sx, it.sy - o.z * z - h * 0.5 * z, w, h, 0.5, 0.5, false, o.rot, 0, Math.min(1, o.life));
         break;
       }
-      case 7: {
-        const ctx = this.ctx, d = this.dpr;
-        const sy = it.sy - o.z * z;
-        ctx.setTransform(d, 0, 0, d, 0, 0);
-        ctx.fillStyle = '#3d4a2a';
-        ctx.beginPath();
-        ctx.arc(it.sx, sy - 4 * z, 5.5 * z, 0, Math.PI * 2);
-        ctx.fill();
-        if (o.landed && Math.sin(this.time * 30) > 0) this.glow('red', it.sx, sy - 4 * z, 26 * z, 0.9);
-        break;
-      }
       case 8: {
         const e = o.ref;
         const k = o.life / o.max;
@@ -689,14 +698,8 @@ export class Renderer {
         const s = this.playerSprite(o);
         const hop = o.moving ? Math.abs(Math.sin(o.walkT * 11)) * 3 * z : 0;
         const rot = o.moving ? Math.sin(o.walkT * 11) * 0.07 : 0;
-        const [rx, ry] = [-(o.aimX - o.aimY) * C * o.recoil * 4 * z, -(o.aimX + o.aimY) * C * 0.5 * o.recoil * 4 * z];
         const flash = o.hurtT > 0 ? 0.9 : 0;
-        this.sprite(s.key, it.sx + rx, it.sy - hop + ry, s.w, s.h, 0.5, 0.97, s.flip, rot, 0, 1, flash);
-        // muzzle flash
-        if (o.recoil > 0.65) {
-          const mx = it.sx + (o.aimX - o.aimY) * C * 22 * z, my = it.sy - 24 * z + (o.aimX + o.aimY) * C * 0.5 * 22 * z;
-          this.glow(o.plasmaT > 0 ? 'magenta' : 'yellow', mx, my, 24 * z * o.recoil, 1);
-        }
+        this.sprite(s.key, it.sx, it.sy - hop, s.w, s.h, 0.5, 0.97, s.flip, rot, 0, 1, flash);
         // flashlight + personal light
         const ax = (o.aimX - o.aimY) * C, ay = (o.aimX + o.aimY) * C * 0.5;
         this.flash = { x: it.sx + ax * 150 * z, y: it.sy + ay * 150 * z - 10 * z, ang: Math.atan2(ay, ax) };
@@ -704,19 +707,58 @@ export class Renderer {
         break;
       }
       case 10: {
-        // the borrowed police cruiser, 8 directions
-        const c = carSprite(o.h);
+        // cars: 8 directions, lifted by tractor beams, sirens, headlights, wrecks
+        const c = carSprite(o);
         const [w, h] = this.sizeW(c.key, c.w);
         const ay = 1 - c.base;
-        const bump = Math.abs(o.speed) > 30 ? Math.sin(t * 34) * 0.7 * z : 0;
-        this.sprite(c.key, it.sx, it.sy + bump, w, h, 0.5, ay, c.flip, 0, 0, 1, o.invT > 0 ? 0.5 : 0);
-        const ph = Math.floor(t * 7) % 2;
-        const roofY = it.sy - h * ay * z * 0.8;
-        this.glow(ph ? 'red' : 'blue', it.sx + (ph ? -6 : 6) * z, roofY, 42 * z, 0.55 + night * 0.45);
-        this.addLight(it.sx, it.sy - 10 * z, 150, 0.9);
-        const [hx, hy] = this.project(o.x + Math.cos(o.h) * 120, o.y + Math.sin(o.h) * 120);
-        this.addLight(hx, hy, 150, 0.85, 0.6);
-        this.flash = null;
+        const lift = o.lift * 90 * z;
+        const bump = Math.abs(o.speed) > 30 ? Math.sin(t * 34 + o.x) * 0.7 * z : 0;
+        const wob = o.lift > 0 ? Math.sin(t * 9 + o.x) * 0.12 * o.lift : 0;
+        const hl = this.interactTarget === o ? 0.2 + 0.12 * Math.sin(t * 8) : o.invT > 0 ? 0.5 : 0;
+        if (o.boostT > 0) this.glow('magenta', it.sx - Math.cos(o.h) * 30 * z, it.sy - 8 * z, 46 * z, 0.7);
+        this.sprite(c.key, it.sx, it.sy + bump - lift, w, h, 0.5, ay, c.flip, wob, 0, 1, hl);
+        const roofY = it.sy - lift - h * ay * z * 0.8;
+        if (o.wreck) {
+          if (o.burnT > 0) {
+            this.glow('orange', it.sx, it.sy - 20 * z, 70 * z, 0.4 + Math.random() * 0.2);
+            this.addLight(it.sx, it.sy - 10 * z, 150, 0.7);
+          }
+          break;
+        }
+        if (o.V.siren && o.driver) {
+          const ph = Math.floor(t * 7 + o.x) % 2;
+          this.glow(ph ? 'red' : 'blue', it.sx + (ph ? -6 : 6) * z, roofY, 42 * z, 0.55 + night * 0.45);
+          this.addLight(it.sx, it.sy - 10 * z, 140, 0.8);
+        }
+        if (o.honkFlash > 0) this.glow('yellow', it.sx, roofY - 10 * z, 60 * z, o.honkFlash * 2);
+        if (o.driver) {
+          // headlights sweep the road ahead
+          const [hx, hy] = this.project(o.x + Math.cos(o.h) * 120, o.y + Math.sin(o.h) * 120);
+          this.addLight(hx, hy, 150, 0.85, 0.6);
+          if (night > 0.2) {
+            const [fx, fy] = this.project(o.x + Math.cos(o.h) * 40, o.y + Math.sin(o.h) * 40, 14);
+            this.glow('warm', fx, fy, 22 * z, night * 0.8);
+          }
+        }
+        if (o === g.player.car) this.addLight(it.sx, it.sy - 20 * z, 120, 0.8);
+        if (o.lift > 0) this.glow('cyan', it.sx, it.sy - lift, 60 * z, 0.4 + o.lift * 0.4);
+        break;
+      }
+      case 11: {
+        // knocked-over props flying / toppling
+        const gm = this.propGeom(o);
+        const a = Math.min(1, o.life);
+        if (o.fall >= 0) this.sprite(o.sprite, it.sx, it.sy, gm.w, gm.h, 0.5, gm.ay, o.flip, o.rot, 0, a);
+        else this.sprite(o.sprite, it.sx, it.sy - o.z * z - gm.h * 0.4 * z, gm.w, gm.h, 0.5, 0.5, o.flip, o.rot, 0, a);
+        break;
+      }
+      case 12: {
+        const [w, h] = this.sizeW('dog', SIZE.dog);
+        const moving = Math.hypot(o.vx, o.vy) > 10;
+        const hop = moving ? Math.abs(Math.sin(o.walkT * 16)) * 3 * z : 0;
+        const hl = this.interactTarget === o ? 0.25 + 0.15 * Math.sin(t * 8) : 0;
+        this.sprite('dog', it.sx, it.sy - hop, w, h, 0.5, 0.9, o.flip, moving ? Math.sin(o.walkT * 16) * 0.08 : Math.sin(t * 3) * 0.03, 0, 1, hl);
+        if (o.bark > 0) this.glow('white', it.sx + (o.flip ? 14 : -14) * z, it.sy - h * 0.7 * z, 12 * z, o.bark);
         break;
       }
     }
@@ -734,27 +776,7 @@ export class Renderer {
   drawFx(g) {
     const ctx = this.ctx, d = this.dpr, z = this.zoom;
     ctx.setTransform(d, 0, 0, d, 0, 0);
-    // bullets
     ctx.globalCompositeOperation = 'lighter';
-    for (const b of g.bullets) {
-      const [sx, sy] = this.project(b.x, b.y, 22);
-      if (sx < -50 || sx > this.W + 50 || sy < -50 || sy > this.H + 50) continue;
-      if (b.kind === 'plasma') {
-        ctx.globalAlpha = 1;
-        ctx.drawImage(this.glows.magenta, sx - 16 * z, sy - 16 * z, 32 * z, 32 * z);
-        ctx.drawImage(this.glows.white, sx - 6 * z, sy - 6 * z, 12 * z, 12 * z);
-        this.addLight(sx, sy, 50, 0.4);
-        continue;
-      }
-      const l = b.kind === 'smg' ? 0.022 : 0.03;
-      const [ex, ey] = this.project(b.x - b.vx * l, b.y - b.vy * l, 22);
-      ctx.strokeStyle = b.kind === 'smg' ? 'rgba(255,230,150,0.9)' : 'rgba(255,240,190,0.95)';
-      ctx.lineWidth = (b.kind === 'smg' ? 1.6 : 2.2) * z;
-      ctx.beginPath();
-      ctx.moveTo(ex, ey);
-      ctx.lineTo(sx, sy);
-      ctx.stroke();
-    }
     for (const b of g.ebullets) {
       const [sx, sy] = this.project(b.x, b.y, 20);
       if (sx < -50 || sx > this.W + 50 || sy < -50 || sy > this.H + 50) continue;
@@ -777,6 +799,14 @@ export class Renderer {
           ctx.globalCompositeOperation = 'lighter';
           ctx.globalAlpha = k;
           ctx.drawImage(this.glows.yellow, sx - 7 * z, sy - 7 * z, 14 * z, 14 * z);
+          break;
+        case 'water':
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.globalAlpha = Math.min(1, k * 2) * 0.85;
+          ctx.fillStyle = '#bfe8ff';
+          ctx.beginPath();
+          ctx.arc(sx, sy, 2.6 * z, 0, Math.PI * 2);
+          ctx.fill();
           break;
         case 'heart':
           ctx.globalCompositeOperation = 'lighter';
@@ -864,10 +894,9 @@ export class Renderer {
       if (u.beam > 0) this.beam(sx, sy + 14 * z, gx, gy, u.beam);
       const [w, h] = this.sizeW('ufo', 150);
       const flash = u.hitT > 0 ? 0.6 : 0;
-      this.sprite('ufo', sx, sy, w, h, 0.5, 0.55, false, Math.sin(t * 1.3 + u.spin) * 0.06, 0, 1, flash);
+      this.sprite('ufo', sx, sy, w, h, 0.5, 0.55, false, Math.sin(t * 1.3 + u.spin) * 0.06 + (u.spooked ? Math.sin(t * 40) * 0.15 : 0), 0, 1, flash);
       this.glow('cyan', sx, sy + 10 * z, 70 * z, 0.35 + this.dark * 0.4, 0.5);
       this.addLight(sx, sy, 150, 0.8);
-      if (u.state === 'hover' && u.hp > 0) this.hpBar(sx, sy - 52 * z, 60 * z, u.hp / u.maxHp, '#5ae6ff');
     }
     // mothership
     const m = g.mother;
@@ -875,7 +904,7 @@ export class Renderer {
       const bob = Math.sin(t * 0.8) * 10;
       const [sx, sy] = this.project(m.x, m.y, m.z + bob);
       const [w, h] = this.sizeW('mothership', 420);
-      this.sprite('mothership', sx, sy, w, h, 0.5, 0.55, false, Math.sin(t * 0.5) * 0.03, 0, 1, m.hitT > 0 ? 0.4 : 0);
+      this.sprite('mothership', sx, sy, w, h, 0.5, 0.55, false, Math.sin(t * 0.5) * 0.03);
       const pulse = 0.6 + 0.4 * Math.sin(t * 5);
       this.glow('magenta', sx, sy - 14 * z, 90 * z, pulse);
       this.glow('violet', sx, sy + 20 * z, 220 * z, 0.3 + this.dark * 0.3, 0.45);

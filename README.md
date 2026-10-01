@@ -7,13 +7,13 @@ finally binged all of it. The reviews are in: *one star. Too many cooking shows.
 only good characters.* The network pulled the plug on the whole planet, the cows got a spin-off,
 and everybody else gets probed.
 
-You are **Dale** from Pine Bluff, Nevada (pop. 1,204, for now). Divorced. Owns a shotgun.
-Had no plans for Tuesday. Survive as long as you can. Nobody is coming.
+You are **Dale** from Pine Bluff, Nevada (pop. 1,204, for now). Divorced. His shotgun was never
+loaded. But he knows where the sheriff leaves his keys. Save who you can. Nobody is coming.
 
-An isometric, real-time survival game for mobile browsers. There are no levels: the invasion
-escalates continuously through threat levels, day/night cycles, meteor showers (the actual
-*skyfall*), landed saucer nests, cow abductions and the occasional visit from the Network
-Executive herself.
+An isometric, real-time survival game for mobile browsers - **not a shooter**. Dale is defenceless on
+foot; cars are everything. There are no levels: the invasion escalates continuously through threat
+levels, day/night cycles, meteor showers (the actual *skyfall*), landed saucers, tractor beams that
+grab cars, people and cows, and the occasional meeting with the Network Executive herself.
 
 ## Play
 
@@ -22,24 +22,27 @@ fullscreen.
 
 | | Touch | Keyboard |
 |---|---|---|
-| Move | left thumb (floating joystick) | WASD / arrow keys |
-| Aim & fire | automatic (drag on the right half to aim manually) | automatic |
-| Grenade | grenade button | Space / G |
-| Interact | context button (appears when something is in reach) | E / F |
+| Walk / steer | thumb anywhere (floating joystick) | WASD / arrow keys |
+| Get in / out, carjack, talk, pet, search, rig | context button | E / F |
+| Honk (in a car) / whistle (on foot) | horn button | Space / H |
+| Alien nitro | nitro button | Shift / Q |
 | Pause | pause button | Esc / P |
 
-Things to do besides shooting:
-
-- **Search** houses, the corner store, trailers, parked cars and bins for supplies (and jokes).
-- **Drive** the abandoned police cruisers: siren on, run aliens over, get out before it explodes.
-- **Talk** to survivors so they follow you, then bring them to the **evac bus** at the sandbag fort.
-- **Pet** cows for a little emotional-support health.
-- **Rig** the gas station. Then run.
-- **Missions** from a very sarcastic dispatcher: scavenge, escort, destroy a landed saucer, save a
-  cow from abduction, joyride, blow things up. Rewards are supplies, gratitude is not included.
-
-Pickups: shells, medkits, grenades, SMG, alien plasma core. Shoot the landed saucers before they
-fill the town.
+- **Cars:** police cruiser, sheriff's car, pickup truck and minivan, each with its own speed,
+  toughness, fuel tank and number of seats. Steal them from panicking drivers if you have to.
+- **Taxi service:** roll up slowly next to survivors and they jump in. Drop them at the **evac bus**
+  by the sandbag fort. Honking calls survivors over.
+- **Honk** at saucers to scare them off - it saves cows, people and your own car from tractor beams.
+  It also startles aliens.
+- **Run aliens over** (brutes will wreck your car), **ram landed saucers**, rig the gas station.
+- **Fuel and damage:** cars burn gas and fall apart. Fuel cans, duct-tape toolboxes, medkits and alien
+  nitro are scattered around, in houses (search them on foot) and handed out by grateful survivors.
+- **Property damage** is tracked to the dollar: flamingos, mailboxes, hydrants (water fountains!),
+  streetlights, palm trees, cars, the gas station. The insurance industry is watching.
+- The town is alive: traffic on the roads, crowds fleeing aliens, a very good dog, cows, tumbleweeds,
+  vultures, chimney smoke, burning houses.
+- **Missions** from a very sarcastic dispatcher: taxi runs, roadkill quotas, demolition, carjacking,
+  ramming saucers, honking cows free, blowing up the gas station.
 
 ## How it's built
 

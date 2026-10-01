@@ -103,12 +103,18 @@ function start(A, font) {
     },
     pause: () => {
       if (ui.state === 'play') ui.state = 'pause';
+      sound.engine(false);
+      sound.siren(false);
     },
     resume: () => {
       if (ui.state === 'pause') ui.state = 'play';
+      const car = game.player.car;
+      if (car && car.V.siren) sound.siren(true);
     },
     menu: () => {
       ui.state = 'title';
+      sound.engine(false);
+      sound.siren(false);
     },
     restart: () => startGame(),
     toggleSound: () => sound.toggle(),
@@ -136,7 +142,7 @@ function start(A, font) {
   window.addEventListener('orientationchange', () => setTimeout(resize, 200));
   resize();
 
-  const idle = { mx: 0, my: 0, aim: false, ax: 0, ay: 0, grenade: false };
+  const idle = { mx: 0, my: 0, action: false, honk: false, boost: false };
   let last = performance.now();
   const frame = (now) => {
     const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));

@@ -1,27 +1,20 @@
-// Game simulation: player, aliens, saucers, meteors, critters and the escalation director.
+// Game simulation: Dale, his rides, the aliens, saucers, meteors, critters and the escalation director.
+// Nobody here has a gun. Dale's weapons are a car, a horn and questionable judgement.
 import { TILE, rand, randi, pick, clamp, dist2, weighted, screenDirToWorld, worldDirToScreen } from './util.js';
 import { World, N, WORLD } from './world.js';
 import * as L from './lines.js';
 import { InteractMixin } from './interact.js';
+import { VehicleMixin } from './vehicles.js';
 
 export const ENEMY = {
-  grunt: { sprite: 'alien_grunt', hp: 34, speed: 72, r: 10, dmg: 9, size: ['h', 52], drop: 0.15 },
-  crawler: { sprite: 'alien_crawler', hp: 15, speed: 140, r: 9, dmg: 6, size: ['w', 40], drop: 0.08 },
-  spitter: { sprite: 'alien_spitter', hp: 28, speed: 58, r: 10, dmg: 6, size: ['h', 54], drop: 0.2, ranged: true },
-  brute: { sprite: 'alien_brute', hp: 230, speed: 46, r: 20, dmg: 22, size: ['w', 84], drop: 0.75 },
+  grunt: { sprite: 'alien_grunt', hp: 34, speed: 72, r: 10, dmg: 9, size: ['h', 52], drop: 0.12 },
+  crawler: { sprite: 'alien_crawler', hp: 15, speed: 140, r: 9, dmg: 6, size: ['w', 40], drop: 0.06 },
+  spitter: { sprite: 'alien_spitter', hp: 28, speed: 58, r: 10, dmg: 6, size: ['h', 54], drop: 0.15, ranged: true },
+  brute: { sprite: 'alien_brute', hp: 230, speed: 46, r: 20, dmg: 22, size: ['w', 84], drop: 0.6 },
 };
 
-const WEAPONS = {
-  shotgun: { cd: 0.6, n: 6, spread: 0.46, speed: 900, range: 330, dmg: 11, knock: 140, kind: 'pellet', sound: 'shotgun' },
-  revolver: { cd: 0.42, n: 1, spread: 0.02, speed: 1050, range: 370, dmg: 17, knock: 80, kind: 'pellet', sound: 'pistol' },
-  smg: { cd: 0.075, n: 1, spread: 0.14, speed: 1000, range: 370, dmg: 8, knock: 40, kind: 'smg', sound: 'smg' },
-  plasma: { cd: 0.17, n: 3, spread: 0.3, speed: 720, range: 430, dmg: 24, knock: 90, kind: 'plasma', pierce: 3, sound: 'plasma' },
-};
-
-const PICKUPS = ['ammo', 'medkit', 'grenades', 'smg', 'core'];
-export const PICKUP_SPRITE = { ammo: 'pk_ammo', medkit: 'pk_medkit', grenades: 'pk_grenades', smg: 'pk_smg', core: 'pk_core' };
+export const PICKUP_SPRITE = { fuel: 'pk_fuel', repair: 'pk_tools', medkit: 'pk_medkit', nitro: 'pk_core' };
 const CIVS = ['civ_dad', 'civ_curlers', 'civ_tinfoil'];
-
 const DAY = 160; // seconds per day/night cycle
 
 export class Game {
@@ -35,20 +28,17 @@ export class Game {
     this.world = new World((Math.random() * 1e9) | 0);
     const s = this.world.start;
     this.player = {
-      x: s.x, y: s.y, r: 11, hp: 100, maxHp: 100, shells: 30, grenades: 2,
-      aimX: 1, aimY: 0, fx: -1, fy: 1, moving: false, walkT: 0, fireCd: 0,
-      smgT: 0, plasmaT: 0, invT: 0, hurtT: 0, lastHit: 0, recoil: 0, dead: false,
+      x: s.x + 24, y: s.y + 34, r: 11, hp: 100, maxHp: 100, cans: 1, nitro: 1,
+      aimX: 1, aimY: 1, fx: 1, fy: 1, moving: false, walkT: 0, invT: 0, hurtT: 0, lastHit: 0, dead: false, car: null, whistleT: 0,
     };
     this.enemies = [];
     this.civs = [];
-    this.cows = this.world.cows.map((c) => ({ x: c.x, y: c.y, r: 12, vx: 0, vy: 0, t: rand(5), state: 'graze', flip: Math.random() < 0.5, z: 0, rot: 0, scale: 1 }));
+    this.cows = this.world.cows.map((c) => ({ x: c.x, y: c.y, r: 12, vx: 0, vy: 0, t: rand(5), state: 'graze', flip: Math.random() < 0.5, z: 0, rot: 0, scale: 1, petCd: 0 }));
     this.pickups = [];
     this.nests = [];
     this.ufos = [];
     this.mother = null;
-    this.bullets = [];
     this.ebullets = [];
-    this.grenades = [];
     this.meteors = [];
     this.decals = [];
     this.fx = [];
@@ -68,33 +58,44 @@ export class Game {
     this.over = false;
     this.overT = 0;
     // director timers
-    this.tSpawn = 1.5;
-    this.tUfo = 9;
-    this.tNest = 70;
-    this.tShower = 95;
+    this.tSpawn = 2;
+    this.tUfo = 10;
+    this.tNest = 75;
+    this.tShower = 100;
     this.showerT = 0;
     this.tMother = 240;
     this.tLoot = 2;
-    this.tCiv = 14;
+    this.tCiv = 2;
     this.tFire = 12;
     this.tAmbient = 22;
     this.tLowHp = 0;
     this.tTumble = 3;
     this.tLoneMeteor = 30;
+    this.tChimney = 0;
     this.phase = 'day';
     this.milestones = new Set();
+    this.houses = this.world.props.filter((q) => q.type.startsWith('house'));
     this.initInteract();
+    this.initVehicles();
+    // Dale's first ride is parked right next to him
+    const start = this.makeCar('police', s.x + 70, s.y, 0, null);
+    start.fuel = start.maxFuel;
+    this.cars = this.cars.filter((c) => dist2(c.x, c.y, start.x, start.y) > 120 * 120);
+    this.cars.push(start);
+    this.dog = { x: s.x - 60, y: s.y + 90, r: 9, vx: 0, vy: 0, flip: false, walkT: 0, bark: 0, barkT: 2, petCd: 0 };
     this.sound.siren(false);
+    this.sound.engine(false);
     this.say(pick(L.INTRO), true);
     for (let i = 0; i < 2; i++) this.vultures.push(this.makeVulture());
-    // initial loot so the first minute is not pure misery
     for (let i = 0; i < 6; i++) this.spawnLoot();
+    for (let i = 0; i < 5; i++) this.spawnCiv();
   }
 
   // --- messaging -------------------------------------------------------------
   say(text, priority = false) {
     if (priority) this.ticker.unshift(text);
     else if (this.ticker.length < 3) this.ticker.push(text);
+    if (this.ticker.length > 4) this.ticker.length = 4;
     if (priority && this.tickerCur && this.tickerCur.t > 1.2) this.tickerCur.t = Math.max(this.tickerCur.t, this.tickerCur.dur - 0.3);
   }
   showBanner(text, sub) {
@@ -104,8 +105,9 @@ export class Game {
   float(text, x, y, size = 15, life = 1.4) {
     // stack texts that pop up at the same time so they stay readable
     let z = 46;
-    for (const f of this.floaters) if (f.t < 0.6 && Math.abs(f.x - x) + Math.abs(f.y - y) < 80) z = Math.max(z, f.z + 24);
+    for (const f of this.floaters) if (f.t < 0.8 && Math.abs(f.x - x) + Math.abs(f.y - y) < 200) z = Math.max(z, f.z + 24);
     this.floaters.push({ text, x, y, z, t: 0, life, size });
+    if (this.floaters.length > 14) this.floaters.shift();
   }
 
   // --- escalation helpers ----------------------------------------------------
@@ -156,12 +158,13 @@ export class Game {
     this.world.updateFlow(p.x, p.y);
     this.updateEnemies(dt);
     this.updateCivs(dt);
+    this.updateDog(dt);
     this.updateCows(dt);
+    this.updateCars(dt);
     this.updateUfos(dt);
     this.updateMother(dt);
     this.updateNests(dt);
-    this.updateBullets(dt);
-    this.updateGrenades(dt);
+    this.updateEBullets(dt);
     this.updateMeteors(dt);
     this.updatePickups(dt);
     this.updateAmbient(dt);
@@ -189,7 +192,6 @@ export class Game {
   updateDirector(dt, day) {
     const t = this.time;
     const p = this.player;
-    // threat level
     if (this.threat > this.level) {
       this.level = this.threat;
       const th = L.THREAT[this.level];
@@ -197,10 +199,9 @@ export class Game {
       this.say(th.line, true);
       this.vultures.push(this.makeVulture());
     }
-    // day / night transitions
     if (day.ph !== this.phase) {
       if (day.ph === 'dusk') {
-        this.showBanner('NIGHT FALLS', 'LIGHTS ON. HOPE ON STANDBY.');
+        this.showBanner('NIGHT FALLS', 'HEADLIGHTS ON. HOPE ON STANDBY.');
         this.say(pick(L.NIGHT), true);
       } else if (day.ph === 'dawn') {
         this.showBanner('DAWN', 'STILL ALIVE. SOMEHOW.');
@@ -211,28 +212,39 @@ export class Game {
 
     // regular alien spawns
     const alive = this.enemies.length;
-    const cap = Math.min(150, 12 + t * 0.14);
-    const rate = (0.42 + t * 0.0072) * (1 + day.dark * 0.6);
+    const cap = Math.min(140, 12 + t * 0.13);
+    const rate = (0.45 + t * 0.007) * (1 + day.dark * 0.6);
     this.tSpawn -= dt;
     if (this.tSpawn <= 0) {
       this.tSpawn = 1 / rate;
       if (alive < cap) {
-        const n = t > 240 && Math.random() < 0.3 ? randi(2, 4) : 1;
+        const n = t > 200 && Math.random() < 0.35 ? randi(2, 5) : 1;
         const spot = this.edgeSpot();
         if (spot) for (let k = 0; k < n; k++) this.spawnEnemy(this.rollType(), spot.x + rand(-40, 40), spot.y + rand(-40, 40), 0.9);
       }
     }
 
-    // drop ships
+    // saucers: drop aliens, beam up cows, people and cars
     this.tUfo -= dt;
     if (this.tUfo <= 0) {
-      this.tUfo = Math.max(7, 19 - t / 28) * rand(0.8, 1.2);
-      const victims = this.cows.filter((c) => c.state !== 'abducted' && dist2(c.x, c.y, p.x, p.y) < 900 * 900);
-      if (victims.length && Math.random() < 0.35) this.spawnUfo('abduct', pick(victims));
-      else if (alive < cap + 10) this.spawnUfo('drop');
+      this.tUfo = Math.max(6, 16 - t / 30) * rand(0.8, 1.2);
+      const r = Math.random();
+      const near = (list, R) => list.filter((o) => dist2(o.x, o.y, p.x, p.y) < R * R);
+      if (t > 40 && r < 0.3) {
+        let victim = null;
+        if (p.car && Math.random() < 0.55) victim = p.car;
+        else victim = pick(near(this.cars.filter((c) => !c.wreck && c !== p.car && !c.lift), 900)) || null;
+        if (victim) this.spawnUfo('abduct', victim, 'car');
+        else this.spawnUfo('drop');
+      } else if (r < 0.58) {
+        const cows = near(this.cows.filter((c) => c.state !== 'abducted' && !c.target), 900);
+        const civs = near(this.civs.filter((c) => !c.taken), 700);
+        if (cows.length && (Math.random() < 0.5 || !civs.length)) this.spawnUfo('abduct', pick(cows), 'cow');
+        else if (civs.length) this.spawnUfo('abduct', pick(civs), 'civ');
+        else this.spawnUfo('drop');
+      } else if (alive < cap + 10) this.spawnUfo('drop');
     }
 
-    // landed nests
     this.tNest -= dt;
     if (this.tNest <= 0) {
       this.tNest = 55 + rand(0, 25);
@@ -250,8 +262,11 @@ export class Game {
     if (this.showerT > 0) {
       this.showerT -= dt;
       const r = 2.2 + this.level * 0.9;
-      if (Math.random() < r * dt) this.spawnMeteor(p.x + rand(-380, 380), p.y + rand(-380, 380), Math.random() < 0.15 + this.level * 0.05);
-      if (Math.random() < 0.6 * dt) this.spawnMeteor(p.x + rand(-60, 60), p.y + rand(-60, 60), false); // a personal one
+      // aim a little ahead of a moving car
+      const lead = p.car ? 0.8 : 0;
+      const ax = p.x + (p.car ? Math.cos(p.car.h) * p.car.speed * lead : 0), ay = p.y + (p.car ? Math.sin(p.car.h) * p.car.speed * lead : 0);
+      if (Math.random() < r * dt) this.spawnMeteor(ax + rand(-400, 400), ay + rand(-400, 400), Math.random() < 0.15 + this.level * 0.05);
+      if (Math.random() < 0.5 * dt) this.spawnMeteor(ax + rand(-60, 60), ay + rand(-60, 60), false);
     }
     if (this.level >= 3) {
       this.tLoneMeteor -= dt;
@@ -261,28 +276,25 @@ export class Game {
       }
     }
 
-    // mothership
     this.tMother -= dt;
     if (this.tMother <= 0 && !this.mother) {
-      this.tMother = 210;
+      this.tMother = 220;
       this.spawnMother();
     }
 
-    // loot keeps trickling in
     this.tLoot -= dt;
     if (this.tLoot <= 0) {
-      this.tLoot = 6;
-      if (this.pickups.filter((k) => !k.drop).length < 9) this.spawnLoot();
+      this.tLoot = 5;
+      if (this.pickups.filter((k) => !k.drop).length < 10) this.spawnLoot();
     }
 
-    // civilians wander out of their houses
+    // a steady trickle of panicking residents
     this.tCiv -= dt;
     if (this.tCiv <= 0) {
-      this.tCiv = rand(28, 42);
-      if (this.civs.length < 3) this.spawnCiv();
+      this.tCiv = rand(4, 8);
+      if (this.civs.filter((c) => !c.taken).length < Math.min(12, 6 + this.level)) this.spawnCiv();
     }
 
-    // escalation: the town starts burning
     if (t > 170) {
       this.tFire -= dt;
       if (this.tFire <= 0) {
@@ -325,34 +337,36 @@ export class Game {
     const e = {
       type, def, x, y, r: def.r, hp: def.hp * scale, maxHp: def.hp * scale,
       speed: def.speed * Math.min(1.45, 1 + this.time / 1000) * rand(0.9, 1.1),
-      vx: 0, vy: 0, kx: 0, ky: 0, atkCd: 0, shootCd: rand(1, 2.5), chargeCd: rand(2, 4), chargeT: 0,
+      vx: 0, vy: 0, kx: 0, ky: 0, atkCd: 0, shootCd: rand(1, 2.5), chargeCd: rand(2, 4), chargeT: 0, stun: 0,
       spawnT: materialize ? 0 : 1, matSpeed: materialize || 1, hitT: 0, walkT: rand(5), flip: false, target: null, retarget: 0,
     };
     this.enemies.push(e);
     return e;
   }
 
-  spawnUfo(mode, victim = null) {
+  spawnUfo(mode, victim = null, kind = null) {
     const p = this.player;
     const ang = rand(Math.PI * 2);
     let tx, ty;
-    if (mode === 'abduct') (tx = victim.x), (ty = victim.y);
+    if (victim) (tx = victim.x), (ty = victim.y);
     else {
       const s = this.world.randomSpot(p.x, p.y, 230, 420) || { x: p.x + 300, y: p.y };
       tx = s.x;
       ty = s.y;
     }
     const sx = tx + Math.cos(ang) * 1400, sy = ty + Math.sin(ang) * 1400;
-    this.ufos.push({
-      mode, victim, x: sx, y: sy, z: 230, tx, ty, sx, sy, state: 'in', t: 0, beam: 0,
-      drops: Math.min(14, 3 + Math.floor(this.time / 65)), dropT: 0, hp: 160 + this.time * 0.6, maxHp: 160 + this.time * 0.6, hitT: 0, spin: rand(6),
-    });
-    if (mode === 'abduct' && victim) {
+    const u = {
+      mode, kind, victim, x: sx, y: sy, z: 230, tx, ty, sx, sy, state: 'in', t: 0, beam: 0,
+      drops: Math.min(14, 3 + Math.floor(this.time / 65)), dropT: 0, hitT: 0, spin: rand(6),
+    };
+    this.ufos.push(u);
+    if (kind === 'cow') {
       victim.target = true;
       victim.state = 'graze';
       victim.t = 99;
-      if (!this.mission) this.startMissionObj({ type: 'cow', t: 0, limit: 30, count: 0, need: 1, ufo: this.ufos[this.ufos.length - 1] });
+      if (!this.mission) this.startMissionObj({ type: 'cow', t: 0, limit: 30, count: 0, need: 1, ufo: u });
     }
+    if (kind === 'car' && victim === p.car) this.float('SAUCER INCOMING! KEEP MOVING!', p.x, p.y, 13, 1.8);
   }
 
   spawnNest() {
@@ -361,15 +375,14 @@ export class Game {
     if (!s) return;
     const hp = 420 + this.time * 1.6;
     this.nests.push({ x: s.x, y: s.y, r: 46, hp, maxHp: hp, spawnCd: 3, land: 0, hitT: 0, pulse: 0 });
-    this.showBanner('UFO LANDED', 'IT IS MAKING MORE OF THEM');
+    this.showBanner('UFO LANDED', 'RAM IT BEFORE IT MAKES MORE');
     this.say(pick(L.NEST), true);
   }
 
   spawnMother() {
     const p = this.player;
-    const hp = 2200 + this.time * 4;
-    this.mother = { x: p.x - 900, y: p.y - 900, z: 260, hp, maxHp: hp, t: 0, fireCd: 3, dropCd: 6, hitT: 0, state: 'in', leaveT: 75 };
-    this.showBanner('MOTHERSHIP', 'SHE IS VERY DISAPPOINTED IN YOU');
+    this.mother = { x: p.x - 900, y: p.y - 900, z: 260, t: 0, fireCd: 3, dropCd: 6, hitT: 0, state: 'in', leaveT: 60 };
+    this.showBanner('MOTHERSHIP', 'SURVIVE THE MEETING');
     this.say(pick(L.MOTHER_IN), true);
   }
 
@@ -381,8 +394,7 @@ export class Game {
   }
 
   spawnLoot() {
-    const p = this.player;
-    const w = this.world;
+    const p = this.player, w = this.world;
     let spot = null;
     if (w.lootSpots.length && Math.random() < 0.5) {
       const near = w.lootSpots.filter((s) => {
@@ -391,23 +403,29 @@ export class Game {
       });
       if (near.length) spot = pick(near);
     }
-    if (!spot) spot = w.randomSpot(p.x, p.y, 250, 750);
+    if (!spot) spot = w.randomSpot(p.x, p.y, 250, 800);
     if (!spot) return;
-    const type = weighted([['ammo', 6], ['medkit', 3], ['grenades', 2], ['smg', 1.2], ['core', 0.6]]);
+    const type = weighted([['fuel', 5], ['repair', 3], ['medkit', 2], ['nitro', 1.6]]);
     this.pickups.push({ type, x: spot.x + rand(-10, 10), y: spot.y + rand(-10, 10), t: rand(5), life: Infinity, drop: false });
   }
 
   drop(x, y, chance) {
     if (Math.random() > chance) return;
     const p = this.player;
-    const type = weighted([
-      ['ammo', p.shells < 10 ? 9 : 5],
-      ['medkit', p.hp < 50 ? 4 : 1.5],
-      ['grenades', 1.4],
-      ['smg', 0.7],
-      ['core', 0.35],
-    ]);
+    const type = weighted([['fuel', 3], ['repair', 2], ['medkit', p.hp < 50 ? 3 : 1], ['nitro', 1.5]]);
     this.pickups.push({ type, x, y, t: 0, life: 22, drop: true, pop: 1 });
+  }
+
+  newCiv(type, x, y) {
+    return { type, x, y, r: 10, vx: 0, vy: 0, wx: rand(-1, 1), wy: rand(-1, 1), t: 0, walkT: 0, panic: rand(1), flip: false, gave: false, life: 90, quipT: rand(3, 6), fade: 1, yell: 0, hail: 0, z: 0 };
+  }
+
+  spawnCivAt(x, y, type) {
+    const c = this.newCiv(type || pick(CIVS), x, y);
+    c.gave = true;
+    this.world.collide(c);
+    this.civs.push(c);
+    return c;
   }
 
   spawnCiv(forMission = false) {
@@ -415,21 +433,25 @@ export class Game {
     if (forMission) {
       const s = this.world.randomSpot(p.x, p.y, 380, 680);
       if (!s) return null;
-      const c = { type: pick(CIVS), x: s.x, y: s.y, r: 10, vx: 0, vy: 0, t: 0, walkT: 0, panic: rand(1), flip: false, gave: true, life: 999, quipT: rand(3, 6), fade: 1, mission: true };
+      const c = this.newCiv(pick(CIVS), s.x, s.y);
+      c.gave = true;
+      c.life = 999;
+      c.mission = true;
       this.civs.push(c);
       return c;
     }
-    const houses = this.world.props.filter((h) => h.box && h.type.startsWith('house') && dist2(h.x, h.y, p.x, p.y) < 800 * 800 && dist2(h.x, h.y, p.x, p.y) > 250 * 250);
+    // they come running out of houses
+    const houses = this.houses.filter((h) => dist2(h.x, h.y, p.x, p.y) < 900 * 900 && dist2(h.x, h.y, p.x, p.y) > 200 * 200 && !h.burning);
     let s;
     if (houses.length) {
       const h = pick(houses);
       s = this.world.randomSpot(h.x, h.y, 120, 170, 20);
     }
-    if (!s) s = this.world.randomSpot(p.x, p.y, 300, 600);
+    if (!s) s = this.world.randomSpot(p.x, p.y, 300, 700);
     if (!s) return;
-    const type = Math.random() < 0.25 ? 'civ_tinfoil' : pick(CIVS.slice(0, 2));
-    this.civs.push({ type, x: s.x, y: s.y, r: 10, vx: 0, vy: 0, t: 0, walkT: 0, panic: rand(1), flip: false, gave: false, life: 45, quipT: rand(3, 6), fade: 1 });
-    if (Math.random() < 0.4) this.say(pick(L.CIV_SPAWN));
+    const type = Math.random() < 0.22 ? 'civ_tinfoil' : pick(CIVS.slice(0, 2));
+    this.civs.push(this.newCiv(type, s.x, s.y));
+    if (Math.random() < 0.15) this.say(pick(L.CIV_SPAWN));
   }
 
   spawnTumbleweed() {
@@ -443,7 +465,7 @@ export class Game {
   }
 
   igniteNear(x, y, radius, announce = false) {
-    const cands = this.world.props.filter((q) => q.box && !q.burning && dist2(q.x, q.y, x, y) < radius * radius && (q.type.startsWith('house') || q.type.startsWith('car') || q.type === 'store' || q.type === 'trailer' || q.type === 'gas_station'));
+    const cands = this.world.props.filter((q) => q.box && !q.burning && dist2(q.x, q.y, x, y) < radius * radius && (q.type.startsWith('house') || q.type === 'store' || q.type === 'trailer' || q.type === 'gas_station'));
     if (!cands.length) return null;
     const q = pick(cands);
     this.ignite(q);
@@ -451,67 +473,47 @@ export class Game {
     return q;
   }
   ignite(q) {
-    if (q.burning) return;
+    if (q.burning || !q.box) return;
     q.burning = true;
     this.fires.push({ prop: q, t: 0, emit: 0 });
   }
 
-  // --- player ------------------------------------------------------------------
+  // --- Dale --------------------------------------------------------------------
   updatePlayer(dt, input) {
     const p = this.player;
-    p.fireCd -= dt;
     p.invT -= dt;
     p.hurtT = Math.max(0, p.hurtT - dt);
-    p.recoil = Math.max(0, p.recoil - dt * 6);
-    p.smgT = Math.max(0, p.smgT - dt);
-    p.plasmaT = Math.max(0, p.plasmaT - dt);
+    p.whistleT -= dt;
     p.lastHit += dt;
-    if (p.lastHit > 5 && p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + 1.4 * dt);
-    if (p.car) return this.updateCar(dt, input);
+    if (p.lastHit > 6 && p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + 1.0 * dt);
+    if (p.car) return this.updatePlayerCar(dt, input);
 
-    // movement
+    // on foot: run, Dale, run
     const [wx, wy] = screenDirToWorld(input.mx, input.my);
     const mag = Math.min(1, Math.hypot(input.mx, input.my));
-    const speed = 168 * mag;
+    const speed = 178 * mag;
     p.moving = mag > 0.1;
     p.x += wx * speed * dt;
     p.y += wy * speed * dt;
     if (p.moving) {
       p.walkT += dt * (0.6 + mag);
-      p.fx = wx;
-      p.fy = wy;
+      p.fx = p.aimX = wx;
+      p.fy = p.aimY = wy;
     }
     this.world.collide(p);
     for (const n of this.nests) pushOut(p, n.x, n.y, n.r);
-
-    // aiming
-    let target = null, tx = 0, ty = 0;
-    if (input.aim) {
-      const [ax, ay] = screenDirToWorld(input.ax, input.ay);
-      p.aimX = ax;
-      p.aimY = ay;
-      target = 'manual';
-    } else {
-      const t = this.findTarget();
-      if (t) {
-        target = t;
-        tx = t.x - p.x;
-        ty = t.y - p.y;
-        const l = Math.hypot(tx, ty) || 1;
-        p.aimX = tx / l;
-        p.aimY = ty / l;
-      } else if (p.moving) {
-        p.aimX = p.fx;
-        p.aimY = p.fy;
-      }
+    for (const c of this.cars) {
+      // parked cars are solid
+      const dx = p.x - c.x, dy = p.y - c.y, rr = c.r + p.r, d = Math.hypot(dx, dy);
+      if (d < rr && d > 0.01) (p.x = c.x + (dx / d) * rr), (p.y = c.y + (dy / d) * rr);
     }
-
-    // shooting
-    if (target && p.fireCd <= 0) this.fire();
-
-    if (input.grenade) this.throwGrenade();
-
-    // low HP heckling
+    // whistle: survivors and the dog come running
+    if (input.honk && p.whistleT <= 0) {
+      p.whistleT = 1;
+      this.sound.play('whistle2');
+      this.float(pick(['*WHISTLES*', 'OVER HERE!', 'HEY! YOU! NOT DEAD!']), p.x, p.y, 12, 1);
+      for (const v of this.civs) if (!v.taken && dist2(v.x, v.y, p.x, p.y) < 350 * 350) v.hail = 4;
+    }
     this.tLowHp -= dt;
     if (p.hp < 30 && this.tLowHp <= 0) {
       this.tLowHp = 25;
@@ -519,90 +521,13 @@ export class Game {
     }
   }
 
-  findTarget() {
-    const p = this.player, w = this.world;
-    const range = 340;
-    const cands = [];
-    for (const e of this.enemies) {
-      if (e.spawnT < 0.6 || e.dead) continue;
-      const d = dist2(e.x, e.y, p.x, p.y);
-      if (d < range * range) cands.push([d, e]);
-    }
-    cands.sort((a, b) => a[0] - b[0]);
-    for (let i = 0; i < Math.min(5, cands.length); i++) {
-      const e = cands[i][1];
-      if (w.los(p.x, p.y, e.x, e.y)) return e;
-    }
-    for (const n of this.nests) if (n.land >= 1 && dist2(n.x, n.y, p.x, p.y) < (range + 40) ** 2 && w.los(p.x, p.y, n.x, n.y)) return n;
-    for (const u of this.ufos) if (u.state === 'hover' && dist2(u.x, u.y, p.x, p.y) < (range + 40) ** 2) return u;
-    const m = this.mother;
-    if (m && m.state === 'fight' && dist2(m.x, m.y, p.x, p.y) < (range + 120) ** 2) return m;
-    return null;
-  }
-
-  fire() {
-    const p = this.player;
-    let wname = 'shotgun';
-    if (p.plasmaT > 0) wname = 'plasma';
-    else if (p.smgT > 0) wname = 'smg';
-    else if (p.shells <= 0) wname = 'revolver';
-    const w = WEAPONS[wname];
-    p.fireCd = w.cd;
-    if (wname === 'shotgun') {
-      p.shells--;
-      if (p.shells === 0) this.say(pick(L.NO_AMMO), true);
-    }
-    const base = Math.atan2(p.aimY, p.aimX);
-    for (let i = 0; i < w.n; i++) {
-      const a = base + (w.n > 1 ? (i / (w.n - 1) - 0.5) * w.spread : 0) + rand(-0.04, 0.04) + (wname === 'smg' ? rand(-w.spread, w.spread) / 2 : 0);
-      const sp = w.speed * rand(0.92, 1.05);
-      this.bullets.push({ x: p.x + p.aimX * 18, y: p.y + p.aimY * 18, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: w.range / w.speed, dmg: w.dmg, knock: w.knock, kind: w.kind, pierce: w.pierce || 1, hits: null });
-    }
-    p.recoil = 1;
-    this.sound.play(w.sound);
-    // muzzle flash light + particles
-    const mx = p.x + p.aimX * 22, my = p.y + p.aimY * 22;
-    this.flashes.push({ x: mx, y: my, z: 34, r: wname === 'shotgun' ? 150 : 90, t: 0.07, color: wname === 'plasma' ? 'magenta' : 'yellow' });
-    for (let i = 0; i < (wname === 'shotgun' ? 6 : 2); i++) this.addFx('spark', mx, my, 34, p.aimX * rand(100, 300) + rand(-60, 60), p.aimY * rand(100, 300) + rand(-60, 60), rand(-20, 60), rand(0.08, 0.18));
-    if (wname === 'shotgun') {
-      this.addFx('smoke', mx, my, 34, p.aimX * 30, p.aimY * 30, 20, rand(0.5, 0.9), 0.4);
-      // ejected shell
-      this.addFx('shell', p.x, p.y, 34, -p.aimY * rand(40, 90), p.aimX * rand(40, 90), rand(80, 140), 1.2);
-    }
-  }
-
-  throwGrenade() {
-    const p = this.player;
-    if (p.grenades <= 0) {
-      this.float('NO GRENADES. JUST VIBES.', p.x, p.y, 13);
-      this.sound.play('empty');
-      return;
-    }
-    p.grenades--;
-    // aim for the juiciest cluster
-    let best = null, bestN = 0;
-    for (const e of this.enemies) {
-      const d = dist2(e.x, e.y, p.x, p.y);
-      if (d > 360 * 360 || d < 70 * 70) continue;
-      let n = 0;
-      for (const o of this.enemies) if (dist2(e.x, e.y, o.x, o.y) < 110 * 110) n += o.type === 'brute' ? 3 : 1;
-      if (n > bestN) (bestN = n), (best = e);
-    }
-    let tx, ty;
-    if (best) (tx = best.x), (ty = best.y);
-    else (tx = p.x + p.aimX * 230), (ty = p.y + p.aimY * 230);
-    const d = Math.hypot(tx - p.x, ty - p.y);
-    this.grenades.push({ sx: p.x, sy: p.y, tx, ty, x: p.x, y: p.y, z: 30, t: 0, dur: 0.35 + d / 700, fuse: 0.35, landed: false, rot: 0 });
-    this.sound.play('throw');
-  }
-
   hurtPlayer(dmg, fromX, fromY, knock = 0) {
     const p = this.player;
     if (p.car) {
-      // the cruiser takes the beating instead
+      // the car takes the beating instead
       if (p.car.invT <= 0) {
         p.car.invT = 0.15;
-        this.damageCar(dmg);
+        this.hurtCar(p.car, dmg);
       }
       return;
     }
@@ -634,6 +559,7 @@ export class Game {
     this.over = true;
     this.overT = 0;
     this.sound.siren(false);
+    this.sound.engine(false);
     this.deathLine = pick(L.DEATH);
     this.sound.play('over');
     this.explode(p.x, p.y, 0, false, true);
@@ -650,6 +576,7 @@ export class Game {
       a.push(e);
     }
     const nightBoost = 1 + this.darkness * 0.12;
+    const pr = p.car ? p.car.r : p.r;
     for (const e of this.enemies) {
       if (e.dead) continue;
       e.hitT = Math.max(0, e.hitT - dt);
@@ -659,7 +586,16 @@ export class Game {
       }
       e.atkCd -= dt;
       e.walkT += dt;
-      // pick prey: the player, or a juicier civilian nearby
+      if (e.stun > 0) {
+        // honked at / soaked: confused for a moment
+        e.stun -= dt;
+        e.x += e.kx * dt;
+        e.y += e.ky * dt;
+        e.kx *= Math.pow(0.01, dt);
+        e.ky *= Math.pow(0.01, dt);
+        w.collide(e);
+        continue;
+      }
       e.retarget -= dt;
       if (e.retarget <= 0) {
         e.retarget = 0.8;
@@ -671,6 +607,7 @@ export class Game {
           if (dc < 220 * 220 && dc < dp * 0.6) e.target = c;
         }
       }
+      if (e.target && e.target.taken) e.target = null;
       const tgt = e.target || p;
       let dx = tgt.x - e.x, dy = tgt.y - e.y;
       const d = Math.hypot(dx, dy) || 1;
@@ -683,7 +620,6 @@ export class Game {
       }
       let sp = e.speed * nightBoost;
       if (e.def.ranged && !e.target) {
-        // keep a polite shooting distance
         if (d < 200) (mx = -dx), (my = -dy), (sp *= 0.7);
         else if (d < 290 && w.los(e.x, e.y, p.x, p.y)) sp *= 0.15;
         e.shootCd -= dt;
@@ -700,7 +636,6 @@ export class Game {
       }
       e.vx = mx * sp;
       e.vy = my * sp;
-      // separation
       const gx = e.x >> 6, gy = e.y >> 6;
       for (let oy = -1; oy <= 1; oy++)
         for (let ox = -1; ox <= 1; ox++) {
@@ -710,9 +645,9 @@ export class Game {
             if (o === e) continue;
             const sx = e.x - o.x, sy = e.y - o.y;
             const rr = e.r + o.r;
-            const d2 = sx * sx + sy * sy;
-            if (d2 < rr * rr && d2 > 0.01) {
-              const dd = Math.sqrt(d2);
+            const d2v = sx * sx + sy * sy;
+            if (d2v < rr * rr && d2v > 0.01) {
+              const dd = Math.sqrt(d2v);
               const push = (rr - dd) * 0.5;
               e.x += (sx / dd) * push;
               e.y += (sy / dd) * push;
@@ -727,15 +662,13 @@ export class Game {
       for (const n of this.nests) pushOut(e, n.x, n.y, n.r);
       const sdx = worldDirToScreen(e.vx, e.vy)[0];
       if (Math.abs(sdx) > 5) e.flip = sdx > 0;
-      // melee
-      const reach = e.r + (e.target ? tgt.r : p.car ? p.car.r : p.r) + 4;
+      const reach = e.r + (e.target ? tgt.r : pr) + 4;
       if (d < reach && e.atkCd <= 0) {
         e.atkCd = 0.85;
         if (e.target) this.takeCiv(e.target);
-        else this.hurtPlayer(e.def.dmg * (1 + this.time / 900), e.x, e.y, e.type === 'brute' ? 26 : 6);
+        else this.hurtPlayer(e.def.dmg * (1 + this.time / 900) * (p.car && e.type === 'brute' ? 1.6 : 1), e.x, e.y, e.type === 'brute' ? 26 : 6);
       }
     }
-    // remove the dead
     this.enemies = this.enemies.filter((e) => !e.dead);
   }
 
@@ -758,31 +691,42 @@ export class Game {
     const big = e.type === 'brute';
     for (let i = 0; i < (big ? 18 : 8); i++) this.addFx('goo', e.x, e.y, 20 + rand(30), rand(-160, 160), rand(-160, 160), rand(80, 220), rand(0.5, 0.9));
     this.addDecal('splat', e.x, e.y, big ? 1.8 : 1);
-    this.addFx('corpse', e.x, e.y, 0, 0, 0, 0, 0.35, 0, e);
+    this.addFx('corpse', e.x, e.y, 0, e.kx * 0.3, e.ky * 0.3, 0, 0.35, 0, e);
     this.drop(e.x, e.y, e.def.drop);
     if (L.KILLS[this.kills] && !this.milestones.has(this.kills)) {
       this.milestones.add(this.kills);
       this.say(L.KILLS[this.kills], true);
-      this.float(this.kills + ' KILLS', this.player.x, this.player.y, 20, 2);
     }
   }
 
-  // --- civilians & critters ---------------------------------------------------
+  // --- residents, the dog and the cows -------------------------------------------
   updateCivs(dt) {
     const p = this.player, w = this.world;
+    const ev = w.evac;
     for (const c of this.civs) {
       c.t += dt;
+      c.yell -= dt;
       if (c.taken) {
-        c.fade -= dt * 1.5;
-        if (c.taken === 'probed') c.z = (c.z || 0) + dt * 220;
+        if (c.taken === 'probed' || c.taken === 'beamed') {
+          c.z = (c.z || 0) + dt * (c.taken === 'beamed' ? 90 : 220);
+          c.fade -= dt * (c.taken === 'beamed' ? 0.4 : 1.5);
+        } else if (c.taken === 'rescued' && ev) {
+          // shuffle over to the bus and get on
+          const dx = ev.x - c.x, dy = ev.y - 80 - c.y, d = Math.hypot(dx, dy) || 1;
+          c.x += (dx / d) * 130 * dt;
+          c.y += (dy / d) * 130 * dt;
+          c.walkT += dt;
+          c.flip = worldDirToScreen(dx, dy)[0] > 0;
+          c.fade -= dt * (d < 40 ? 3 : 0.35);
+        } else c.fade -= dt * 5;
         continue;
       }
       c.life -= dt;
-      c.yell = (c.yell || 0) - dt;
-      if (c.follow) {
-        // tag along behind Dale; the evac bus takes it from there
+      c.hail -= dt;
+      if (c.follow || c.hail > 0) {
+        // tag along behind Dale / run to the honking car
         const dx = p.x - c.x, dy = p.y - c.y, d = Math.hypot(dx, dy) || 1;
-        const sp = d > 220 ? 210 : d > 45 ? 150 : 0;
+        const sp = c.hail > 0 ? 165 : d > 220 ? 210 : d > 45 ? 150 : 0;
         c.vx = (dx / d) * sp;
         c.vy = (dy / d) * sp;
         c.x += c.vx * dt;
@@ -791,11 +735,10 @@ export class Game {
         w.collide(c);
         const sdx = worldDirToScreen(c.vx, c.vy)[0];
         if (Math.abs(sdx) > 5) c.flip = sdx > 0;
-        const ev = w.evac;
-        if (ev && dist2(c.x, c.y, ev.x, ev.y) < 150 * 150) this.rescueCiv(c);
+        if (c.follow && ev && dist2(c.x, c.y, ev.x, ev.y) < 150 * 150) this.rescueCiv(c);
         continue;
       }
-      // run away from the nearest alien, otherwise towards the player-ish
+      // run away from the nearest alien
       let ax = 0, ay = 0;
       for (const e of this.enemies) {
         const d2v = dist2(e.x, e.y, c.x, c.y);
@@ -810,15 +753,16 @@ export class Game {
         c.panic = rand(0.6, 1.6);
         c.wx = rand(-1, 1);
         c.wy = rand(-1, 1);
+        if (Math.random() < 0.08 && dist2(c.x, c.y, p.x, p.y) < 500 * 500) this.sound.play('scream');
       }
-      // nobody is chasing them and Dale is close: stop and wait to be talked to
-      if (Math.abs(ax) + Math.abs(ay) < 1 && dist2(c.x, c.y, p.x, p.y) < 120 * 120) {
+      if (Math.abs(ax) + Math.abs(ay) < 1 && !p.car && dist2(c.x, c.y, p.x, p.y) < 120 * 120) {
+        // Dale is close and nothing is chasing them: wait to be talked to
         c.vx = c.vy = 0;
         c.flip = worldDirToScreen(p.x - c.x, p.y - c.y)[0] > 0;
       } else {
         const mx = ax + c.wx * 80, my = ay + c.wy * 80;
         const l = Math.hypot(mx, my) || 1;
-        const sp = c.type === 'civ_tinfoil' ? 95 : 120;
+        const sp = c.type === 'civ_tinfoil' ? 95 : 125;
         c.vx = (mx / l) * sp;
         c.vy = (my / l) * sp;
         c.x += c.vx * dt;
@@ -832,15 +776,15 @@ export class Game {
         c.quipT -= dt;
         if (c.quipT <= 0) {
           c.quipT = rand(4, 7);
-          this.float(pick(L.TINFOIL), c.x, c.y, 13, 1.8);
+          this.float(pick(L.TINFOIL), c.x, c.y, 12, 1.8);
         }
       }
-      // reward for getting close: they hand over whatever they grabbed on the way out
-      if (!c.gave && dist2(c.x, c.y, p.x, p.y) < 60 * 60) {
+      // they hand Dale whatever they grabbed on the way out
+      if (!c.gave && !p.car && dist2(c.x, c.y, p.x, p.y) < 60 * 60) {
         c.gave = true;
-        const type = weighted([['ammo', 5], ['medkit', 3], ['grenades', 2], ['smg', 1]]);
+        const type = weighted([['fuel', 4], ['medkit', 3], ['repair', 2], ['nitro', 1]]);
         this.pickups.push({ type, x: c.x, y: c.y, t: 0, life: 25, drop: true, pop: 1 });
-        this.float(pick(['TAKE IT, I AM A PACIFIST NOW!', 'HERE! I FOUND THIS IN THE GARAGE!', 'MY HUSBAND WON\'T NEED THIS!', 'PLEASE SHOOT THEM!', 'IS THIS COVERED BY INSURANCE?']), c.x, c.y, 13, 2);
+        this.float(pick(L.GIFT), c.x, c.y, 12, 2);
         this.sound.play('pickup');
       }
       if (c.life <= 0) c.taken = 'left';
@@ -852,9 +796,54 @@ export class Game {
     if (c.taken) return;
     c.taken = 'probed';
     this.sound.play('scream');
-    this.say(pick(L.CIV_TAKEN), true);
+    if (Math.random() < 0.5) this.say(pick(L.CIV_TAKEN));
     this.flashes.push({ x: c.x, y: c.y, z: 30, r: 160, t: 0.4, color: 'magenta' });
     for (let i = 0; i < 12; i++) this.addFx('beamdot', c.x + rand(-14, 14), c.y + rand(-14, 14), rand(0, 40), 0, 0, rand(80, 200), rand(0.5, 1));
+  }
+
+  updateDog(dt) {
+    const d = this.dog, p = this.player, w = this.world;
+    if (!d) return;
+    d.petCd -= dt;
+    d.barkT -= dt;
+    d.bark -= dt;
+    const dist = Math.hypot(p.x - d.x, p.y - d.y);
+    if (dist > 1100) {
+      // good boys always find you
+      const a = rand(Math.PI * 2);
+      d.x = p.x + Math.cos(a) * 500;
+      d.y = p.y + Math.sin(a) * 500;
+    }
+    // bark at aliens and nip at their ankles
+    let threat = null;
+    for (const e of this.enemies) if (dist2(e.x, e.y, d.x, d.y) < 160 * 160) (threat = e);
+    let tx = p.x, ty = p.y, sp = 0;
+    if (threat && dist < 400) {
+      tx = threat.x;
+      ty = threat.y;
+      sp = 230;
+      if (d.barkT <= 0) {
+        d.barkT = rand(0.8, 1.6);
+        d.bark = 0.4;
+        this.sound.play('bark');
+        if (Math.random() < 0.2) this.float('WOOF!', d.x, d.y, 11, 0.8);
+      }
+      if (dist2(threat.x, threat.y, d.x, d.y) < 40 * 40) (threat.stun = Math.max(threat.stun, 0.4)), (threat.kx += rand(-60, 60));
+    } else if (dist > (p.car ? 70 : 60)) sp = Math.min(p.car ? 330 : 230, 120 + dist * 1.1);
+    const dx = tx - d.x, dy = ty - d.y, l = Math.hypot(dx, dy) || 1;
+    d.vx = (dx / l) * sp;
+    d.vy = (dy / l) * sp;
+    d.x += d.vx * dt;
+    d.y += d.vy * dt;
+    if (sp) d.walkT += dt * (sp / 120);
+    w.collide(d);
+    const sdx = worldDirToScreen(d.vx, d.vy)[0];
+    if (Math.abs(sdx) > 5) d.flip = sdx > 0;
+    if (p.car && Math.abs(p.car.speed) > 120 && d.barkT <= 0 && Math.random() < 0.3) {
+      d.barkT = 2;
+      d.bark = 0.4;
+      this.sound.play('bark');
+    }
   }
 
   updateCows(dt) {
@@ -884,8 +873,7 @@ export class Game {
         c.x += c.vx * dt;
         c.y += c.vy * dt;
         w.collide(c);
-        const sdx = worldDirToScreen(c.vx, c.vy)[0];
-        c.flip = sdx > 0;
+        c.flip = worldDirToScreen(c.vx, c.vy)[0] > 0;
       }
     }
     this.cows = this.cows.filter((c) => c.z < 260);
@@ -893,15 +881,16 @@ export class Game {
 
   // --- saucers -------------------------------------------------------------------
   updateUfos(dt) {
+    const p = this.player;
     for (const u of this.ufos) {
       u.t += dt;
       u.spin += dt * 3;
-      u.hitT = Math.max(0, u.hitT - dt);
+      const v = u.victim;
       if (u.state === 'in') {
-        if (u.mode === 'abduct' && u.victim) (u.tx = u.victim.x), (u.ty = u.victim.y);
+        if (v) (u.tx = v.x), (u.ty = v.y);
         const dx = u.tx - u.x, dy = u.ty - u.y, d = Math.hypot(dx, dy);
         const sp = Math.min(900, 160 + d * 1.4);
-        if (d < 8) {
+        if (d < 12 || (u.kind === 'car' && d < 60)) {
           u.state = 'hover';
           u.t = 0;
           this.sound.play('beam');
@@ -910,6 +899,7 @@ export class Game {
           u.y += (dy / d) * sp * dt;
         }
         u.z += (150 - u.z) * dt * 1.5;
+        if (u.t > 14) u.state = 'out';
       } else if (u.state === 'hover') {
         u.beam = Math.min(1, u.beam + dt * 3);
         u.z += (125 - u.z) * dt * 2;
@@ -921,27 +911,54 @@ export class Game {
             const e = this.spawnEnemy(this.rollType(), u.x + rand(-34, 34), u.y + rand(-34, 34), 1.6);
             for (let i = 0; i < 5; i++) this.addFx('beamdot', e.x + rand(-16, 16), e.y + rand(-16, 16), rand(0, 30), 0, 0, rand(60, 160), rand(0.4, 0.8));
           }
-          if (u.drops <= 0 && u.t > 1.2) u.state = 'out';
-        } else {
-          const c = u.victim;
-          if (c && c.state !== 'abducted') {
-            c.state = 'abducted';
+          if (u.drops <= 0 && u.t > 1.2) (u.state = 'out'), (u.t = 0);
+        } else if (u.kind === 'cow') {
+          if (v.state !== 'abducted') {
+            v.state = 'abducted';
             this.sound.play('moo');
           }
-          // reel the cow in under the saucer
-          if (c) {
-            c.x += (u.x - c.x) * Math.min(1, dt * 3);
-            c.y += (u.y - c.y) * Math.min(1, dt * 3);
-          }
-          if (!c || c.z > 215 || u.t > 5) {
+          v.x += (u.x - v.x) * Math.min(1, dt * 3);
+          v.y += (u.y - v.y) * Math.min(1, dt * 3);
+          if (v.z > 215 || u.t > 5) {
             u.state = 'out';
             u.t = 0;
-            if (c) c.z = 999;
+            v.z = 999;
             this.say(pick(L.COW), true);
           }
+        } else if (u.kind === 'civ') {
+          if (!v.taken) {
+            v.taken = 'beamed';
+            this.sound.play('scream');
+          }
+          v.x += (u.x - v.x) * Math.min(1, dt * 3);
+          v.y += (u.y - v.y) * Math.min(1, dt * 3);
+          if (v.z > 200 || u.t > 4.5) {
+            u.state = 'out';
+            u.t = 0;
+            if (Math.random() < 0.6) this.say(pick(L.CIV_TAKEN));
+          }
+        } else if (u.kind === 'car') {
+          // chase the car slowly; it can be outrun
+          const dx = v.x - u.x, dy = v.y - u.y, d = Math.hypot(dx, dy) || 1;
+          const sp = Math.min(d * 2, 125 + this.level * 10);
+          u.x += (dx / d) * sp * dt;
+          u.y += (dy / d) * sp * dt;
+          if (d < 62 && !v.wreck) {
+            v.beamT = 0.15;
+            v.lift = Math.min(1.2, v.lift + dt * 0.42);
+            if (v === p.car && !u.warned && v.lift > 0.25) {
+              u.warned = true;
+              this.float('STEER OUT OF THE BEAM! OR HONK!', v.x, v.y, 13, 2);
+            }
+            if (v.lift >= 1) {
+              this.abductCar(v);
+              u.state = 'out';
+              u.t = 0;
+            }
+          }
+          if (u.t > 10 || v.gone || v.wreck) (u.state = 'out'), (u.t = 0);
         }
       } else if (u.state === 'out') {
-        // leave the way it came, a little higher each second
         u.beam = Math.max(0, u.beam - dt * 3);
         u.x += ((u.sx - u.tx) / 1400) * 700 * dt;
         u.y += ((u.sy - u.ty) / 1400) * 700 * dt;
@@ -949,22 +966,51 @@ export class Game {
         if (u.t > 3.5) u.gone = true;
       }
     }
-    this.ufos = this.ufos.filter((u) => !u.gone && !u.dead);
+    this.ufos = this.ufos.filter((u) => !u.gone);
   }
 
-  damageUfo(u, dmg) {
-    u.hp -= dmg;
-    u.hitT = 0.1;
-    this.sound.play('hit');
-    if (u.hp <= 0 && !u.dead) {
-      u.dead = true;
+  spookUfo(u) {
+    const v = u.victim;
+    u.state = 'out';
+    u.t = 0;
+    u.spooked = true;
+    this.float(pick(L.SPOOKED), u.x, u.y, 13, 1.8);
+    this.sound.play('beam');
+    if (u.kind === 'cow' && v && v.state === 'abducted' && v.z < 999) {
+      v.state = 'graze';
+      v.z = 0;
+      v.rot = 0;
+      v.scale = 1;
+      v.target = false;
       if (this.mission && this.mission.type === 'cow' && this.mission.ufo === u) this.completeMission();
-      this.explode(u.x, u.y, 60, true);
-      this.say(pick(['SAUCER DOWN! THAT ONE WAS A RENTAL.', 'YOU SHOT DOWN A UFO. THE X-FILES WANTS YOUR NUMBER.']), true);
-      this.drop(u.x, u.y, 1);
-      this.drop(u.x + 20, u.y, 0.6);
-      if (u.mode === 'abduct' && u.victim) (u.victim.state = 'graze'), (u.victim.z = 0), (u.victim.rot = 0), (u.victim.scale = 1);
+      else this.say('COW SAVED BY A CAR HORN. SCIENCE CANNOT EXPLAIN IT.', true);
     }
+    if (u.kind === 'civ' && v && v.taken === 'beamed') {
+      v.taken = null;
+      v.z = 0;
+      v.fade = 1;
+      v.hail = 3;
+      this.float('THANK YOU, LOUD MAN!', v.x, v.y, 12, 1.6);
+    }
+  }
+
+  abductCar(c) {
+    const p = this.player;
+    c.gone = true;
+    this.flashes.push({ x: c.x, y: c.y, z: 60, r: 260, t: 0.5, color: 'cyan' });
+    for (let i = 0; i < 16; i++) this.addFx('beamdot', c.x + rand(-30, 30), c.y + rand(-30, 30), rand(20, 80), 0, 0, rand(100, 220), rand(0.6, 1.2));
+    if (c === p.car) {
+      p.car = null;
+      this.sound.siren(false);
+      this.sound.engine(false);
+      if (c.seats.length) this.say('YOUR PASSENGERS ARE NOW EXCHANGE STUDENTS. ON ANOTHER PLANET.', true);
+      this.say(pick(L.CAR_TAKEN), true);
+      p.x = c.x;
+      p.y = c.y;
+      this.world.collide(p);
+      this.hurtPlayer(15, c.x + 1, c.y, 0);
+      this.showBanner('CAR ABDUCTED', 'IT HAD 200,000 MILES ON IT ANYWAY');
+    } else if (Math.random() < 0.5) this.say(pick(['ANOTHER CAR BEAMED UP. THEY REALLY LIKE MINIVANS.', 'A CAR JUST WENT TO SPACE. THE PAYMENTS DID NOT.']));
   }
 
   updateMother(dt) {
@@ -972,10 +1018,7 @@ export class Game {
     if (!m) return;
     const p = this.player;
     m.t += dt;
-    m.hitT = Math.max(0, m.hitT - dt);
-    // hover around the player at a menacing distance
     const tx = p.x - 120 + Math.cos(m.t * 0.3) * 160, ty = p.y - 120 + Math.sin(m.t * 0.3) * 160;
-    const sp = m.state === 'in' ? 2.2 : m.state === 'leave' ? 0 : 0.6;
     if (m.state === 'leave') {
       m.z += dt * 140;
       m.x -= dt * 300;
@@ -983,6 +1026,7 @@ export class Game {
       if (m.z > 900) this.mother = null;
       return;
     }
+    const sp = m.state === 'in' ? 2.2 : 0.6;
     m.x += (tx - m.x) * sp * dt;
     m.y += (ty - m.y) * sp * dt;
     if (m.state === 'in' && dist2(m.x, m.y, tx, ty) < 200 * 200) m.state = 'fight';
@@ -990,8 +1034,8 @@ export class Game {
     m.leaveT -= dt;
     m.fireCd -= dt;
     if (m.fireCd <= 0) {
-      m.fireCd = Math.max(1.6, 3.2 - this.level * 0.2);
-      const n = 14 + this.level * 2;
+      m.fireCd = Math.max(1.8, 3.4 - this.level * 0.2);
+      const n = 12 + this.level * 2;
       const off = rand(1);
       for (let i = 0; i < n; i++) {
         const a = ((i + off) / n) * Math.PI * 2;
@@ -1006,21 +1050,9 @@ export class Game {
     }
     if (m.leaveT <= 0) {
       m.state = 'leave';
+      this.showBanner('MEETING ADJOURNED', 'YOU SURVIVED THE NETWORK EXECUTIVE');
       this.say(pick(L.MOTHER_LEAVE), true);
-    }
-  }
-
-  damageMother(dmg) {
-    const m = this.mother;
-    m.hp -= dmg;
-    m.hitT = 0.08;
-    if (m.hp <= 0) {
-      for (let i = 0; i < 6; i++) setTimeout(() => this.explode(m.x + rand(-120, 120), m.y + rand(-80, 80), 120, true), i * 140);
-      this.say(pick(L.MOTHER_DOWN), true);
-      this.showBanner('MOTHERSHIP DOWN', 'TAKE THAT, MOM');
-      for (let i = 0; i < 6; i++) this.drop(m.x + rand(-80, 80), m.y + rand(-80, 80), 1);
-      this.mother = null;
-      this.sound.play('bigboom');
+      for (let i = 0; i < 3; i++) this.drop(p.x + rand(-80, 80), p.y + rand(-80, 80), 1);
     }
   }
 
@@ -1038,8 +1070,8 @@ export class Game {
         continue;
       }
       n.spawnCd -= dt;
-      if (n.spawnCd <= 0 && this.enemies.length < 160) {
-        n.spawnCd = Math.max(1.6, 4.5 - this.time / 200);
+      if (n.spawnCd <= 0 && this.enemies.length < 150) {
+        n.spawnCd = Math.max(1.8, 4.5 - this.time / 200);
         this.spawnEnemy(this.rollType(), n.x + rand(-20, 20), n.y + 50, 2);
       }
     }
@@ -1047,79 +1079,21 @@ export class Game {
 
   damageNest(n, dmg) {
     n.hp -= dmg;
-    n.hitT = 0.08;
+    n.hitT = 0.12;
     if (n.hp <= 0 && !n.dead) {
       n.dead = true;
       this.explode(n.x, n.y, 30, true);
+      this.pickups.push({ type: 'nitro', x: n.x + 30, y: n.y, t: 0, life: 30, drop: true, pop: 1 });
       this.drop(n.x, n.y, 1);
-      this.pickups.push({ type: 'core', x: n.x + 30, y: n.y, t: 0, life: 30, drop: true, pop: 1 });
-      this.say(pick(['NEST DESTROYED. THE HOA THANKS YOU.', 'THAT SAUCER IS NOW MODERN ART.']), true);
+      this.say(pick(['SAUCER DESTROYED. THE HOA THANKS YOU.', 'THAT SAUCER IS NOW MODERN ART.', 'RAMMED IT. NO INSURANCE COMPANY WILL EVER COVER YOU AGAIN.']), true);
+      this.addDamage(n.x, n.y, 75000, 'ALIEN SAUCER');
     }
     this.nests = this.nests.filter((q) => !q.dead);
   }
 
-  // --- projectiles ----------------------------------------------------------------
-  updateBullets(dt) {
-    const w = this.world;
-    const grid = this.grid;
-    for (const b of this.bullets) {
-      b.life -= dt;
-      const steps = 2;
-      for (let s = 0; s < steps && b.life > 0; s++) {
-        b.x += (b.vx * dt) / steps;
-        b.y += (b.vy * dt) / steps;
-        if (w.hitProp(b.x, b.y)) {
-          b.life = 0;
-          for (let i = 0; i < 3; i++) this.addFx('spark', b.x, b.y, 30, rand(-120, 120), rand(-120, 120), rand(20, 120), 0.15);
-          break;
-        }
-        // aliens
-        const gx = b.x >> 6, gy = b.y >> 6;
-        let hit = false;
-        for (let oy = -1; oy <= 1 && !hit; oy++)
-          for (let ox = -1; ox <= 1 && !hit; ox++) {
-            const a = grid.get(((gx + ox) & 0xffff) | (((gy + oy) & 0xffff) << 16));
-            if (!a) continue;
-            for (const e of a) {
-              if (e.dead || e.spawnT < 0.6) continue;
-              if (b.hits && b.hits.includes(e)) continue;
-              if (dist2(e.x, e.y, b.x, b.y) < (e.r + 5) ** 2) {
-                const sp = Math.hypot(b.vx, b.vy);
-                this.damageEnemy(e, b.dmg, (b.vx / sp) * b.knock, (b.vy / sp) * b.knock);
-                b.pierce--;
-                (b.hits || (b.hits = [])).push(e);
-                if (b.pierce <= 0) (b.life = 0), (hit = true);
-                break;
-              }
-            }
-          }
-        if (hit) break;
-        for (const n of this.nests) {
-          if (n.land >= 1 && dist2(n.x, n.y, b.x, b.y) < n.r * n.r) {
-            this.damageNest(n, b.dmg);
-            b.life = 0;
-            this.addFx('spark', b.x, b.y, 40, rand(-100, 100), rand(-100, 100), 80, 0.15);
-            break;
-          }
-        }
-        for (const u of this.ufos) {
-          if (u.state === 'hover' && dist2(u.x, u.y, b.x, b.y) < 50 * 50) {
-            this.damageUfo(u, b.dmg);
-            b.life = 0;
-            break;
-          }
-        }
-        const m = this.mother;
-        if (m && m.state === 'fight' && b.life > 0 && dist2(m.x, m.y, b.x, b.y) < 130 * 130) {
-          this.damageMother(b.dmg);
-          b.life = 0;
-          this.addFx('spark', b.x, b.y, 120, rand(-100, 100), rand(-100, 100), 80, 0.2);
-        }
-      }
-    }
-    this.bullets = this.bullets.filter((b) => b.life > 0);
-
-    const p = this.player;
+  updateEBullets(dt) {
+    const p = this.player, w = this.world;
+    const pr = p.car ? p.car.r : p.r;
     for (const b of this.ebullets) {
       b.life -= dt;
       b.x += b.vx * dt;
@@ -1128,30 +1102,12 @@ export class Game {
         b.life = 0;
         continue;
       }
-      if (dist2(b.x, b.y, p.x, p.y) < ((p.car ? p.car.r : p.r) + (b.big ? 10 : 6)) ** 2) {
+      if (dist2(b.x, b.y, p.x, p.y) < (pr + (b.big ? 10 : 6)) ** 2) {
         b.life = 0;
         this.hurtPlayer(b.dmg, b.x, b.y, 4);
       }
     }
     this.ebullets = this.ebullets.filter((b) => b.life > 0);
-  }
-
-  updateGrenades(dt) {
-    for (const g of this.grenades) {
-      g.t += dt;
-      g.rot += dt * 14;
-      if (!g.landed) {
-        const k = Math.min(1, g.t / g.dur);
-        g.x = g.sx + (g.tx - g.sx) * k;
-        g.y = g.sy + (g.ty - g.sy) * k;
-        g.z = 30 * (1 - k) + Math.sin(k * Math.PI) * (80 + g.dur * 60);
-        if (k >= 1) (g.landed = true), (g.t = 0);
-      } else if (g.t >= g.fuse) {
-        g.done = true;
-        this.explode(g.x, g.y, 0, false);
-      }
-    }
-    this.grenades = this.grenades.filter((g) => !g.done);
   }
 
   explode(x, y, z = 0, big = false, silent = false) {
@@ -1171,8 +1127,10 @@ export class Game {
       const d = Math.sqrt(dist2(p.x, p.y, x, y));
       if (d < R * 0.8) this.hurtPlayer(big ? 30 : 18, x, y, 20);
     }
-    for (const q of this.world.props) {
-      if (q.box && !q.burning && q.type.startsWith('car') && dist2(q.x, q.y, x, y) < (R * 0.8) ** 2 && Math.random() < 0.6) this.ignite(q);
+    for (const c of this.cars) {
+      if (c === p.car || c.wreck) continue;
+      const d2v = dist2(c.x, c.y, x, y);
+      if (d2v < R * R) this.hurtCar(c, (big ? 90 : 50) * (1 - Math.sqrt(d2v) / R));
     }
     this.shake = Math.max(this.shake, big ? 16 : 11);
     this.flashes.push({ x, y, z: z + 20, r: big ? 420 : 300, t: 0.35, color: 'orange' });
@@ -1182,6 +1140,7 @@ export class Game {
     for (let i = 0; i < 10; i++) this.addFx('debris', x, y, z + 10, rand(-220, 220), rand(-220, 220), rand(120, 320), rand(0.8, 1.4));
     this.addDecal('scorch', x, y, big ? 1.5 : 1.1);
     if (!silent) this.sound.play(big ? 'bigboom' : 'boom');
+    else this.sound.play('boom');
   }
 
   updateMeteors(dt) {
@@ -1208,17 +1167,19 @@ export class Game {
 
   updatePickups(dt) {
     const p = this.player;
+    const car = p.car;
     for (const k of this.pickups) {
       k.t += dt;
       if (k.pop) k.pop = Math.max(0, k.pop - dt * 3);
       if (k.drop) k.life -= dt;
+      if (p.dead) continue;
       const d2v = dist2(k.x, k.y, p.x, p.y);
-      if (d2v < 90 * 90 && !p.dead) {
+      if (!car && d2v < 90 * 90) {
         const d = Math.sqrt(d2v) || 1;
         k.x += ((p.x - k.x) / d) * 260 * dt;
         k.y += ((p.y - k.y) / d) * 260 * dt;
       }
-      if (d2v < 30 * 30 && !p.dead) {
+      if (d2v < (car ? 48 : 30) ** 2) {
         k.taken = true;
         this.collect(k.type);
       }
@@ -1227,16 +1188,34 @@ export class Game {
   }
 
   collect(type) {
-    const p = this.player;
-    let text = pick(L.PICKUP[type]);
-    if (type === 'ammo') p.shells += 12;
-    else if (type === 'medkit') p.hp = Math.min(p.maxHp, p.hp + 35);
-    else if (type === 'grenades') p.grenades = Math.min(6, p.grenades + 2);
-    else if (type === 'smg') p.smgT = 18;
-    else if (type === 'core') p.plasmaT = 12;
-    this.sound.play(type === 'smg' || type === 'core' ? 'power' : 'pickup');
-    this.float(text.split('.')[0], p.x, p.y, 15);
-    if (Math.random() < 0.35 && text.includes('.')) this.say(text);
+    const p = this.player, c = p.car;
+    let text;
+    if (type === 'fuel') {
+      if (c) {
+        c.fuel = Math.min(c.maxFuel, c.fuel + c.maxFuel * 0.6);
+        c.warned = 0;
+        text = pick(L.PICKUP.fuel);
+      } else if (p.cans < 3) {
+        p.cans++;
+        text = '+1 FUEL CAN';
+      } else text = 'CAN\'T CARRY MORE GAS. PROBABLY FOR THE BEST.';
+    } else if (type === 'repair') {
+      if (c) {
+        c.hp = Math.min(c.maxHp, c.hp + c.maxHp * 0.5);
+        text = pick(L.PICKUP.repair);
+      } else {
+        p.hp = Math.min(p.maxHp, p.hp + 20);
+        text = 'DUCT TAPE. +20 HP. YOU ARE MOSTLY TAPE NOW.';
+      }
+    } else if (type === 'medkit') {
+      p.hp = Math.min(p.maxHp, p.hp + 35);
+      text = pick(L.PICKUP.medkit);
+    } else if (type === 'nitro') {
+      p.nitro = Math.min(6, p.nitro + 2);
+      text = pick(L.PICKUP.nitro);
+    }
+    this.sound.play(type === 'nitro' ? 'power' : 'pickup');
+    this.float(text, p.x, p.y, 13, 1.6);
   }
 
   // --- ambient life -------------------------------------------------------------------
@@ -1253,6 +1232,12 @@ export class Game {
       t.x += t.vx * dt;
       t.y += t.vy * dt;
       t.rot += t.vx * dt * 0.05;
+      if (p.car && dist2(t.x, t.y, p.x, p.y) < 40 * 40) {
+        // tumbleweed vs bumper
+        t.vx = Math.cos(p.car.h) * p.car.speed * 0.9;
+        t.vy = Math.sin(p.car.h) * p.car.speed * 0.9;
+        t.vz = 260;
+      }
     }
     this.tumbleweeds = this.tumbleweeds.filter((t) => t.life > 0);
     for (const v of this.vultures) {
@@ -1266,15 +1251,20 @@ export class Game {
       f.t += dt;
       f.emit -= dt;
       const q = f.prop;
-      if (f.emit <= 0) {
+      if (f.emit <= 0 && dist2(q.x, q.y, p.x, p.y) < 1100 * 1100) {
         f.emit = 0.09;
         const b = q.box;
         const x = b.x0 + rand(b.x1 - b.x0), y = b.y0 + rand(b.y1 - b.y0);
-        const big = q.type.startsWith('car') ? 0.8 : 1.4;
-        const h = q.type.startsWith('car') ? 30 : 80;
-        this.addFx('fire', x, y, rand(10, h), rand(-15, 15), rand(-15, 15), rand(40, 90), rand(0.5, 1), big);
-        if (Math.random() < 0.5) this.addFx('smoke', x, y, h + 20, rand(-10, 10) + 20, rand(-10, 10), rand(30, 60), rand(2.5, 4), big * 1.6);
+        this.addFx('fire', x, y, rand(10, 80), rand(-15, 15), rand(-15, 15), rand(40, 90), rand(0.5, 1), 1.4);
+        if (Math.random() < 0.5) this.addFx('smoke', x, y, 100, rand(-10, 10) + 20, rand(-10, 10), rand(30, 60), rand(2.5, 4), 2.2);
       }
+    }
+    // somebody is still baking pies: chimney smoke
+    this.tChimney -= dt;
+    if (this.tChimney <= 0) {
+      this.tChimney = 0.18;
+      const h = pick(this.houses);
+      if (h && !h.burning && dist2(h.x, h.y, p.x, p.y) < 900 * 900) this.addFx('smoke', h.x - 40, h.y - 40, 175, rand(10, 25), rand(-5, 5), rand(18, 30), rand(2.5, 4), 0.55);
     }
     for (const fl of this.flashes) fl.t -= dt;
     this.flashes = this.flashes.filter((f) => f.t > 0);
@@ -1291,7 +1281,7 @@ export class Game {
 
   // --- particles -------------------------------------------------------------------------
   addFx(type, x, y, z, vx, vy, vz, life, size = 1, ref = null) {
-    if (this.fx.length > 700) return;
+    if (this.fx.length > 750) return;
     this.fx.push({ type, x, y, z, vx, vy, vz, life, max: life, size, ref, rot: rand(6.28) });
   }
 
@@ -1305,22 +1295,17 @@ export class Game {
         case 'goo':
         case 'blood':
         case 'debris':
-        case 'shell':
-          f.vz -= 700 * dt;
+        case 'water':
+          f.vz -= (f.type === 'water' ? 600 : 700) * dt;
           if (f.z <= 0) {
             f.z = 0;
-            if (f.type === 'shell' && Math.abs(f.vz) > 60) {
-              f.vz *= -0.4;
-              f.vx *= 0.6;
-              f.vy *= 0.6;
-            } else {
-              f.vx *= 0.8;
-              f.vy *= 0.8;
-              f.vz = 0;
-              if (f.type === 'goo' && !f.splat) {
-                f.splat = true;
-                if (Math.random() < 0.2) this.addDecal('drop', f.x, f.y, 0.4);
-              }
+            f.vx *= 0.8;
+            f.vy *= 0.8;
+            f.vz = 0;
+            if (f.type === 'water') f.life = Math.min(f.life, 0.2);
+            if (f.type === 'goo' && !f.splat) {
+              f.splat = true;
+              if (Math.random() < 0.2) this.addDecal('drop', f.x, f.y, 0.4);
             }
           }
           break;
@@ -1352,6 +1337,6 @@ function pushOut(e, x, y, r) {
   }
 }
 
-export { PICKUPS, WEAPONS, N };
+Object.assign(Game.prototype, VehicleMixin, InteractMixin);
 
-Object.assign(Game.prototype, InteractMixin);
+export { N };

@@ -214,6 +214,34 @@ export class Sound {
       case 'click':
         this.osc('square', 900, 600, 0.04, 0.1);
         break;
+      case 'honk':
+        // a proper two-tone American car horn
+        this.osc('square', 392, 392, 0.32, 0.16);
+        this.osc('square', 494, 494, 0.32, 0.13);
+        this.osc('sawtooth', 196, 196, 0.32, 0.08);
+        break;
+      case 'boost':
+        this.noiseBurst(0.9, 0.7, 'bandpass', 400, 3000, 1.2);
+        this.osc('sawtooth', 120, 480, 0.8, 0.2);
+        break;
+      case 'splash':
+        this.noiseBurst(1.2, 0.5, 'highpass', 1500, 4000, 0.7);
+        break;
+      case 'thud':
+        if (!this.gate(name, 60)) return;
+        this.osc('sine', 160, 60, 0.12, 0.35);
+        this.noiseBurst(0.08, 0.25, 'lowpass', 1200, 300);
+        break;
+      case 'bark':
+        if (!this.gate(name, 250)) return;
+        this.osc('square', 520, 260, 0.09, 0.2);
+        this.noiseBurst(0.08, 0.2, 'bandpass', 900, 600, 3);
+        this.osc('square', 480, 240, 0.08, 0.15, 0.13);
+        break;
+      case 'whistle2':
+        this.osc('sine', 1600, 2400, 0.18, 0.12);
+        this.osc('sine', 2400, 1500, 0.25, 0.12, 0.2);
+        break;
       case 'door':
         this.noiseBurst(0.12, 0.5, 'lowpass', 900, 200, 1);
         this.osc('square', 140, 70, 0.08, 0.25, 0.02);
@@ -241,6 +269,41 @@ export class Sound {
         this.osc('sine', 82, 70, 2.2, 0.3, 1.1);
         break;
     }
+  }
+
+  // Engine drone that follows the speedometer.
+  engine(on, k = 0, boost = false) {
+    if (!this.ctx) return;
+    const c = this.ctx;
+    if (on && !this.eng) {
+      const o = c.createOscillator(), o2 = c.createOscillator(), f = c.createBiquadFilter(), g = c.createGain();
+      o.type = 'sawtooth';
+      o2.type = 'square';
+      f.type = 'lowpass';
+      f.frequency.value = 500;
+      g.gain.value = 0;
+      o.connect(f);
+      o2.connect(f);
+      f.connect(g).connect(this.sfx);
+      o.start();
+      o2.start();
+      this.eng = { o, o2, f, g };
+    }
+    if (!on && this.eng) {
+      const e = this.eng;
+      e.g.gain.setTargetAtTime(0, c.currentTime, 0.08);
+      e.o.stop(c.currentTime + 0.4);
+      e.o2.stop(c.currentTime + 0.4);
+      this.eng = null;
+      return;
+    }
+    if (!this.eng) return;
+    const t = c.currentTime, e = this.eng;
+    const f0 = 42 + k * 70 + (boost ? 40 : 0);
+    e.o.frequency.setTargetAtTime(f0, t, 0.08);
+    e.o2.frequency.setTargetAtTime(f0 * 0.5, t, 0.08);
+    e.f.frequency.setTargetAtTime(380 + k * 900 + (boost ? 800 : 0), t, 0.1);
+    e.g.gain.setTargetAtTime(this.on ? 0.05 + k * 0.05 : 0, t, 0.1);
   }
 
   // Wailing police siren while Dale borrows the cruiser.
