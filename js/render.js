@@ -47,7 +47,8 @@ export class Renderer {
   }
 
   resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // quality steps down automatically on slow devices (see render)
+    const dpr = Math.min(window.devicePixelRatio || 1, [2, 1.5, 1.5, 1][this.quality || 0]);
     const W = window.innerWidth, H = window.innerHeight;
     this.dpr = dpr;
     this.W = W;
@@ -81,6 +82,16 @@ export class Renderer {
   // --- frame -----------------------------------------------------------------------
   render(g, dt) {
     this.time += dt;
+    // adaptive quality: if frames stay slow for a while, trade resolution / post effects for speed
+    if (dt > 0) {
+      this.slow = dt > 1 / 38 ? (this.slow || 0) + dt : Math.max(0, (this.slow || 0) - dt * 0.5);
+      if (this.slow > 3 && (this.quality || 0) < 3) {
+        this.quality = (this.quality || 0) + 1;
+        this.slow = 0;
+        this.resize();
+        if (this.onResize) this.onResize();
+      }
+    }
     const ctx = this.ctx, dpr = this.dpr, z = this.zoom;
     const p = g.player;
     // camera follows the player with a little lead
@@ -147,24 +158,27 @@ export class Renderer {
     this.ctx.setTransform(d * z * C, d * z * C * 0.5, -d * z * C, d * z * C * 0.5, d * this.ox, d * this.oy);
   }
 
-  drawGround(g) {
-    const ctx = this.ctx, w = g.world;
-    const b = this.visibleBounds(80);
-    const i0 = Math.floor(b.x0 / TILE), i1 = Math.ceil(b.x1 / TILE);
-    const j0 = Math.floor(b.y0 / TILE), j1 = Math.ceil(b.y1 / TILE);
-    this.isoTransform();
-    // Tiles are only visible inside a diamond of the bounding box; cull with screen test.
+  // Ground is static: render it once per chunk of tiles, then just blit the chunks.
+  buildChunk(w, ci, cj) {
+    const CH = 8, S = CH * TILE, z = this.zoom, d = this.dpr, pad = 2;
+    const x0 = ci * S, y0 = cj * S;
+    const half = S * C * z;
+    const c = document.createElement('canvas');
+    c.width = Math.ceil((2 * half + pad * 2) * d);
+    c.height = Math.ceil((half + pad * 2) * d);
+    const g = c.getContext('2d');
+    g.setTransform(d * z * C, d * z * C * 0.5, -d * z * C, d * z * C * 0.5, d * (half + pad), d * pad);
+    g.translate(-x0, -y0);
+    // clip to the chunk (slightly enlarged so neighbours overlap and no seams show)
+    g.beginPath();
+    g.rect(x0 - 1.5, y0 - 1.5, S + 3, S + 3);
+    g.clip();
     const paths = [new Path2D(), new Path2D(), new Path2D(), new Path2D(), new Path2D()];
     const used = [0, 0, 0, 0, 0];
-    const W = this.W, H = this.H;
-    for (let j = j0; j <= j1; j++) {
+    for (let j = cj * CH - 1; j <= cj * CH + CH; j++) {
       let runT = -1, runS = 0;
-      for (let i = i0; i <= i1 + 1; i++) {
-        let t = -1;
-        if (i <= i1) {
-          const [sx, sy] = this.project((i + 0.5) * TILE, (j + 0.5) * TILE);
-          if (sx > -120 && sx < W + 120 && sy > -80 && sy < H + 80) t = w.terrain(i, j);
-        }
+      for (let i = ci * CH - 1; i <= ci * CH + CH + 1; i++) {
+        const t = i <= ci * CH + CH ? w.terrain(i, j) : -1;
         if (t !== runT) {
           if (runT >= 0) {
             paths[runT].rect(runS * TILE - 0.6, j * TILE - 0.6, (i - runS) * TILE + 1.2, TILE + 1.2);
@@ -177,34 +191,72 @@ export class Renderer {
     }
     for (let t = 0; t < 5; t++) {
       if (!used[t]) continue;
-      ctx.fillStyle = this.patterns[TEX_OF[t]];
-      ctx.fill(paths[t]);
+      g.fillStyle = this.patterns[TEX_OF[t]];
+      g.fill(paths[t]);
     }
     // soft dirt patches in the desert (organic blobs instead of tile staircases)
     const patch = new Path2D(), rim = new Path2D();
     let any = false;
     for (const q of w.patches) {
-      if (q.x + q.r < b.x0 || q.x - q.r > b.x1 || q.y + q.r < b.y0 || q.y - q.r > b.y1) continue;
+      const r = q.r * 1.35;
+      if (q.x + r < x0 || q.x - r > x0 + S || q.y + r < y0 || q.y - r > y0 + S) continue;
       patch.moveTo(q.x + q.r, q.y);
       patch.arc(q.x, q.y, q.r, 0, Math.PI * 2);
-      rim.moveTo(q.x + q.r * 1.35, q.y);
-      rim.arc(q.x, q.y, q.r * 1.35, 0, Math.PI * 2);
+      rim.moveTo(q.x + r, q.y);
+      rim.arc(q.x, q.y, r, 0, Math.PI * 2);
       any = true;
     }
     if (any) {
-      ctx.fillStyle = this.patterns.dirt;
-      ctx.globalAlpha = 0.3;
-      ctx.fill(rim);
-      ctx.globalAlpha = 0.55;
-      ctx.fill(patch);
-      ctx.globalAlpha = 1;
+      g.fillStyle = this.patterns.dirt;
+      g.globalAlpha = 0.3;
+      g.fill(rim);
+      g.globalAlpha = 0.55;
+      g.fill(patch);
+      g.globalAlpha = 1;
     }
-    // road markings
-    ctx.fillStyle = 'rgba(236,196,72,0.9)';
-    for (const d of w.dashes) {
-      if (d.x1 < b.x0 || d.x0 > b.x1 || d.y1 < b.y0 || d.y0 > b.y1) continue;
-      ctx.fillRect(d.x0, d.y0, d.x1 - d.x0, d.y1 - d.y0);
+    g.fillStyle = 'rgba(236,196,72,0.9)';
+    for (const q of w.dashes) {
+      if (q.x1 < x0 || q.x0 > x0 + S || q.y1 < y0 || q.y0 > y0 + S) continue;
+      g.fillRect(q.x0, q.y0, q.x1 - q.x0, q.y1 - q.y0);
     }
+    return { c, half, pad };
+  }
+
+  drawGround(g) {
+    const ctx = this.ctx, w = g.world;
+    if (this.chunkWorld !== w || this.chunkZoom !== this.zoom || this.chunkDpr !== this.dpr) {
+      this.chunks = new Map();
+      this.chunkWorld = w;
+      this.chunkZoom = this.zoom;
+      this.chunkDpr = this.dpr;
+    }
+    const b = this.visibleBounds(80);
+    const S = 8 * TILE;
+    const ci0 = Math.floor(b.x0 / S), ci1 = Math.floor(b.x1 / S);
+    const cj0 = Math.floor(b.y0 / S), cj1 = Math.floor(b.y1 / S);
+    const d = this.dpr;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    let built = 0;
+    for (let cj = cj0; cj <= cj1; cj++)
+      for (let ci = ci0; ci <= ci1; ci++) {
+        const [sx, sy] = this.project(ci * S, cj * S);
+        const half = S * C * this.zoom;
+        if (sx + half < -10 || sx - half > this.W + 10 || sy > this.H + 10 || sy + half < -10) continue;
+        const key = ci * 4096 + cj;
+        let ch = this.chunks.get(key);
+        if (!ch) {
+          if (built > 10) continue; // spread the work over a few frames
+          ch = this.buildChunk(w, ci, cj);
+          this.chunks.set(key, ch);
+          built++;
+        }
+        ch.used = this.time;
+        ctx.drawImage(ch.c, Math.round((sx - ch.half - ch.pad) * d), Math.round((sy - ch.pad) * d));
+      }
+    // drop chunks that have not been on screen for a while
+    if (this.chunks.size > 48)
+      for (const [k, ch] of this.chunks) if (this.time - ch.used > 4) this.chunks.delete(k);
+    this.isoTransform();
     // flat decals
     for (const d of g.decals) {
       if (d.x < b.x0 || d.x > b.x1 || d.y < b.y0 || d.y > b.y1) continue;
@@ -857,6 +909,7 @@ export class Renderer {
   }
 
   tiltShift() {
+    if (this.quality >= 2) return;
     const ctx = this.ctx;
     const bw = this.cv.width, bh = this.cv.height;
     ctx.setTransform(1, 0, 0, 1, 0, 0);

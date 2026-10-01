@@ -131,6 +131,7 @@ function start(A, font) {
     renderer.resize();
     ui.resize(renderer.W, renderer.H, renderer.dpr);
   };
+  renderer.onResize = () => ui.resize(renderer.W, renderer.H, renderer.dpr);
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', () => setTimeout(resize, 200));
   resize();
