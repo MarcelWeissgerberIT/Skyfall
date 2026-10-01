@@ -1,0 +1,230 @@
+{
+ "sprites": {
+  "player_front": [
+   99,
+   200
+  ],
+  "player_back": [
+   84,
+   200
+  ],
+  "alien_grunt": [
+   100,
+   220
+  ],
+  "alien_brute": [
+   241,
+   300
+  ],
+  "alien_crawler": [
+   200,
+   199
+  ],
+  "alien_spitter": [
+   91,
+   220
+  ],
+  "ufo": [
+   360,
+   252
+  ],
+  "mothership": [
+   620,
+   438
+  ],
+  "landed_ufo": [
+   440,
+   360
+  ],
+  "car_police": [
+   300,
+   172
+  ],
+  "car_pickup": [
+   300,
+   212
+  ],
+  "car_minivan": [
+   300,
+   230
+  ],
+  "house_a": [
+   520,
+   435
+  ],
+  "house_b": [
+   480,
+   355
+  ],
+  "store": [
+   368,
+   440
+  ],
+  "gas_station": [
+   500,
+   345
+  ],
+  "joshua_tree": [
+   186,
+   300
+  ],
+  "palm": [
+   187,
+   400
+  ],
+  "rocks": [
+   233,
+   240
+  ],
+  "shrub": [
+   140,
+   135
+  ],
+  "water_tower": [
+   158,
+   420
+  ],
+  "car_wreck": [
+   300,
+   176
+  ],
+  "bin_mailbox": [
+   139,
+   150
+  ],
+  "crater": [
+   300,
+   190
+  ],
+  "pk_ammo": [
+   113,
+   140
+  ],
+  "pk_medkit": [
+   140,
+   121
+  ],
+  "pk_core": [
+   78,
+   140
+  ],
+  "meteor": [
+   53,
+   260
+  ],
+  "pk_grenades": [
+   138,
+   140
+  ],
+  "house_c": [
+   520,
+   439
+  ],
+  "car_sheriff": [
+   300,
+   173
+  ],
+  "streetlight": [
+   96,
+   300
+  ],
+  "hydrant": [
+   53,
+   90
+  ],
+  "cow": [
+   200,
+   172
+  ],
+  "sandbags": [
+   240,
+   146
+  ],
+  "trailer": [
+   360,
+   282
+  ],
+  "pk_smg": [
+   124,
+   140
+  ],
+  "civ_dad": [
+   142,
+   200
+  ],
+  "civ_curlers": [
+   95,
+   200
+  ],
+  "civ_tinfoil": [
+   105,
+   200
+  ],
+  "tumbleweed": [
+   112,
+   120
+  ],
+  "vulture": [
+   220,
+   99
+  ],
+  "flamingo": [
+   47,
+   90
+  ]
+ },
+ "ui": {
+  "logo": [
+   960,
+   488
+  ],
+  "icon_heart": [
+   128,
+   122
+  ],
+  "icon_ammo": [
+   127,
+   128
+  ],
+  "icon_clock": [
+   100,
+   128
+  ],
+  "icon_skull": [
+   88,
+   128
+  ],
+  "btn_pause": [
+   156,
+   160
+  ],
+  "joy_base": [
+   312,
+   320
+  ],
+  "joy_knob": [
+   177,
+   180
+  ],
+  "btn_wide": [
+   640,
+   231
+  ],
+  "panel": [
+   474,
+   640
+  ],
+  "btn_grenade": [
+   196,
+   200
+  ],
+  "icon_radio": [
+   101,
+   128
+  ],
+  "splash": [
+   752,
+   1344
+  ]
+ }
+}
