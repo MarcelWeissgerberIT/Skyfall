@@ -132,7 +132,7 @@ export const NpcMixin = {
         const dx = n.tx - n.x, dy = n.ty - n.y, d = Math.hypot(dx, dy);
         if (d > 14) (mx = dx / d), (my = dy / d), (sp = n.sp * 0.9);
         if (n.face) n.flip = worldDirToScreen(n.face.x - n.x, n.face.y - n.y)[0] > 0;
-        if (Math.random() < dt * 0.35 && INSULTS[n.kind]) this.float(pick(INSULTS[n.kind]), n.x, n.y, 11, 1.6);
+        if (Math.random() < dt * 0.12 && INSULTS[n.kind] && dP < 700) this.float(pick(INSULTS[n.kind]), n.x, n.y, 11, 1.6);
       } else if (beam) {
         const dx = beam.x - n.x, dy = beam.y - n.y, d = Math.hypot(dx, dy) || 1;
         if (d > 30) (mx = dx / d), (my = dy / d), (sp = n.sp * 1.5);
@@ -185,9 +185,9 @@ export const NpcMixin = {
       const sdx = worldDirToScreen(n.vx, n.vy)[0];
       if (Math.abs(sdx) > 5 && n.state !== 'event') n.flip = sdx > 0;
       // barks when Dale walks by
-      if (n.barkT <= 0 && dP < 230 && !this.scene) {
-        n.barkT = rand(7, 14);
-        if (Math.random() < 0.55) this.float(pick(BARKS[n.fac][this.npcMood(n)]), n.x, n.y, 11, 1.8);
+      if (n.barkT <= 0 && dP < 180 && !this.scene && !p.car) {
+        n.barkT = rand(14, 26);
+        if (Math.random() < 0.35) this.float(pick(BARKS[n.fac][this.npcMood(n)]), n.x, n.y, 11, 1.8);
       }
     }
     // HOA vs Rats: they cannot pass each other without a fight
@@ -195,8 +195,9 @@ export const NpcMixin = {
       if (a.kind !== 'hoa' || a.state === 'knocked') continue;
       for (const b of this.npcs) {
         if (b.kind !== 'biker' || b.state === 'knocked' || dist2(a.x, a.y, b.x, b.y) > 130 * 130) continue;
-        if (Math.random() < dt * 0.25) this.float(pick(INSULTS.hoa), a.x, a.y, 11, 1.5);
-        if (Math.random() < dt * 0.25) this.float(pick(INSULTS.biker), b.x, b.y, 11, 1.5);
+        if (dist2(a.x, a.y, p.x, p.y) > 600 * 600) continue;
+        if (Math.random() < dt * 0.06) this.float(pick(INSULTS.hoa), a.x, a.y, 11, 1.5);
+        if (Math.random() < dt * 0.06) this.float(pick(INSULTS.biker), b.x, b.y, 11, 1.5);
       }
     }
     // events end
@@ -270,7 +271,7 @@ export const NpcMixin = {
     if (this.mode !== 'story' && this.time < 60) return;
     this.tAnarchy -= dt;
     if (this.tAnarchy > 0) return;
-    this.tAnarchy = rand(45, 75);
+    this.tAnarchy = rand(70, 110);
     const p = this.player, w = this.world;
     const spot = w.randomSpot(p.x, p.y, 380, 700, 40);
     if (!spot) return;

@@ -212,9 +212,27 @@ def fit(im, box):
     return im
 
 
+def punch(im, sat=1.18, con=1.05):
+    """The colour boost the game used to apply as a CSS filter on every frame:
+    saturate(1.18) contrast(1.05), baked into the pixels once."""
+    mode = im.mode
+    a = np.asarray(im.convert("RGBA")).astype(np.float32) / 255.0
+    rgb = a[..., :3]
+    m = np.array([
+        [0.213 + 0.787 * sat, 0.715 - 0.715 * sat, 0.072 - 0.072 * sat],
+        [0.213 - 0.213 * sat, 0.715 + 0.285 * sat, 0.072 - 0.072 * sat],
+        [0.213 - 0.213 * sat, 0.715 - 0.715 * sat, 0.072 + 0.928 * sat],
+    ], dtype=np.float32)
+    rgb = np.clip(rgb @ m.T, 0, 1)
+    rgb = np.clip((rgb - 0.5) * con + 0.5, 0, 1)
+    a[..., :3] = rgb
+    out = Image.fromarray((a * 255 + 0.5).astype(np.uint8), "RGBA")
+    return out.convert(mode) if mode != "RGBA" else out
+
+
 def save_webp(im, path, q=88):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    im.save(path, "WEBP", quality=q, method=6)
+    punch(im).save(path, "WEBP", quality=q, method=6)
 
 
 def fix_joy_base(im):
@@ -329,7 +347,7 @@ def build_font():
         else:
             dy = round((target - g.height) / 2)
         meta["glyphs"][ch] = {"x": gx, "y": gy, "w": g.width, "h": g.height, "dy": dy}
-    atlas.save(os.path.join(OUT, "font", "font.webp"), "WEBP", quality=90, method=6)
+    punch(atlas).save(os.path.join(OUT, "font", "font.webp"), "WEBP", quality=90, method=6)
     with open(os.path.join(OUT, "font", "font.json"), "w") as f:
         json.dump(meta, f, separators=(",", ":"))
     print("font", atlas.size, "cap", cap, "->", target)
@@ -351,7 +369,7 @@ def main():
             save_webp(im, os.path.join(OUT, group, name + ".webp"))
             manifest[group][name] = [im.width, im.height]
     for name, raw in TEXTURES.items():
-        tex = seamless(Image.open(os.path.join(RAW, raw + ".png")))
+        tex = punch(seamless(Image.open(os.path.join(RAW, raw + ".png"))))
         tex.save(os.path.join(OUT, "tex", name + ".webp"), "WEBP", quality=82, method=6)
     for name, raw in ITEMS.items():
         im = clean_alpha(fit(trim(load(raw)), (160, 160)))
@@ -372,7 +390,7 @@ def main():
     bars = np.dstack([c, a * 255]).astype(np.uint8)
     save_webp(Image.fromarray(bars, "RGBA"), os.path.join(OUT, "scenes", "sheriff_bars.webp"), q=90)
     manifest["scenes"]["sheriff_bars"] = [box[2] - box[0], box[3] - box[1]]
-    splash = Image.open(os.path.join(RAW, "35_splash.png")).convert("RGB")
+    splash = punch(Image.open(os.path.join(RAW, "35_splash.png")).convert("RGB"))
     splash.save(os.path.join(OUT, "ui", "splash.webp"), "WEBP", quality=80, method=6)
     manifest["ui"]["splash"] = list(splash.size)
     build_font()

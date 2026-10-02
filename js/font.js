@@ -41,6 +41,32 @@ export class BitmapFont {
     }
   }
 
+  // Finished strings are rendered once into a small canvas and reused: one drawImage per string
+  // instead of one per letter (the HUD draws a few hundred letters every frame).
+  drawCached(ctx, text, x, y, size, align, dpr) {
+    text = String(text).toUpperCase();
+    if (!this.cache) this.cache = new Map();
+    const key = text + '|' + Math.round(size * 4) + '|' + dpr;
+    let e = this.cache.get(key);
+    if (e) {
+      this.cache.delete(key);
+      this.cache.set(key, e);
+    } else {
+      const w = this.measure(text, size);
+      const pad = Math.ceil(size * 0.35);
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.ceil((w + pad * 2) * dpr));
+      c.height = Math.max(1, Math.ceil((size * 1.6 + pad * 2) * dpr));
+      const g = c.getContext('2d');
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this.draw(g, text, pad, pad, size, 0);
+      e = { c, w, pad };
+      this.cache.set(key, e);
+      if (this.cache.size > 400) this.cache.delete(this.cache.keys().next().value);
+    }
+    ctx.drawImage(e.c, x - e.w * align - e.pad, y - e.pad, e.c.width / dpr, e.c.height / dpr);
+  }
+
   // Word-wrap text into lines that fit maxW at the given size.
   wrap(text, size, maxW) {
     const words = String(text).toUpperCase().split(' ');

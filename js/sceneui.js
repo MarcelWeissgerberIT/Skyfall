@@ -21,7 +21,6 @@ export class AdvUI {
     this.endStep = 0;
     this.mapCanvas = null;
     this.mapWorld = null;
-    this.waypoint = null;
     this.invPage = 0;
   }
 
@@ -394,7 +393,7 @@ export class AdvUI {
     const maxL = Math.max(1, Math.floor((h - 16 * u) / (size * 1.3)));
     lines.slice(0, maxL).forEach((ln, i) => {
       if (budget <= 0) return;
-      ui.text(ln.slice(0, budget), x + 12 * u, y + 10 * u + i * size * 1.3, size, 0);
+      ui.text(ln.slice(0, budget), x + 12 * u, y + 10 * u + i * size * 1.3, size, 0, 1, budget < ln.length);
       budget -= ln.length + 1;
     });
     if (c.t * 60 < c.text.length && Math.random() < 0.3) g.sound.play('type');
@@ -429,11 +428,18 @@ export class AdvUI {
     ctx.stroke();
   }
 
-  drawDialog(g, x, y, w, h) {
+  // h = the space available; the box only takes what the text and choices need.
+  // bottom = anchor the box to the bottom of that space instead of the top.
+  drawDialog(g, x, y, w, maxH, bottom = false) {
     const ui = this.ui, u = ui.u, ctx = ui.ctx;
     const d = g.dialog;
+    const ps0 = Math.min(78 * u, maxH * 0.32);
+    const lnAll = d.lines[d.i] || '';
+    const need = ps0 + 30 * u + ui.font.wrap(lnAll, 11.5 * u, w - 28 * u).length * 11.5 * u * 1.32 + (d.choices ? d.choices.length * 38 * u + 8 * u : 30 * u);
+    const h = clamp(need, Math.min(170 * u, maxH), maxH);
+    if (bottom) y += maxH - h;
     ui.roundRect(x, y, w, h, 12 * u, 'rgba(9,14,40,0.95)', CHARS[d.who] ? CHARS[d.who].color : '#f3e6c8', 2.5 * u);
-    const ps = Math.min(78 * u, h * 0.32);
+    const ps = ps0;
     this.portrait(d.who, x + 10 * u, y + 10 * u, ps);
     const ch = CHARS[d.who] || CHARS.dale;
     ui.text(ch.name, x + ps + 22 * u, y + 14 * u, 14 * u, 0);
@@ -446,7 +452,7 @@ export class AdvUI {
     if (budget < ln.length && Math.random() < 0.35) g.sound.play('type');
     lines.forEach((l, i) => {
       if (budget <= 0) return;
-      ui.text(l.slice(0, budget), tx, ty + i * size * 1.32, size, 0);
+      ui.text(l.slice(0, budget), tx, ty + i * size * 1.32, size, 0, 1, budget < l.length);
       budget -= l.length + 1;
     });
     const textBottom = ty + lines.length * size * 1.32 + 8 * u;
@@ -764,9 +770,9 @@ export class AdvUI {
       const [lx, ly] = proj(l.x, l.y);
       if (lx < x + 10 * u || lx > x + 10 * u + vw || ly < y + 14 * u || ly > y + 14 * u + vh) continue;
       const s = 24 * u;
-      const sel = this.waypoint === l;
+      const sel = g.waypoint === l;
       ui.btn('lm_' + l.id, lx - s / 2 - 4 * u, ly - s / 2 - 4 * u, s + 8 * u, s + 8 * u, () => {
-        this.waypoint = sel ? null : l;
+        g.waypoint = sel ? null : l;
         g.line(sel ? 'WAYPOINT CLEARED.' : 'WAYPOINT SET: ' + l.name + '. FOLLOW THE GREEN ARROW.');
       }, true);
       ui.img(l.icon, lx - s / 2, ly - s / 2, s);
@@ -832,11 +838,10 @@ export class AdvUI {
     let budget = Math.floor(c.t * 70);
     lines.forEach((ln, i) => {
       if (budget <= 0) return;
-      ui.text(ln.slice(0, budget), x + 12 * u, y + 9 * u + i * size * 1.3, size, 0, a);
+      ui.text(ln.slice(0, budget), x + 12 * u, y + 9 * u + i * size * 1.3, size, 0, a, budget < ln.length);
       budget -= ln.length + 1;
     });
     ui.ctx.globalAlpha = 1;
-    ui.btn('capclose', x, y, w, h, () => (c.t = Math.max(c.t, c.dur - 0.4)));
   }
 
   // --- the ending -------------------------------------------------------------------------------------------

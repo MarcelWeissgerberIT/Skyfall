@@ -334,7 +334,7 @@ export class Sound {
         this.osc('square', 1600, 1600, 0.03, 0.1, 0.06);
         break;
       case 'type':
-        if (!this.gate(name, 45)) return;
+        if (!this.gate(name, 90)) return;
         this.osc('square', 700 + Math.random() * 300, 600, 0.025, 0.035);
         break;
       case 'item':

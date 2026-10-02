@@ -94,6 +94,7 @@ export class Game {
     this.initNpcs();
     if (mode === 'story') {
       this.tMother = 1e9; // in the story the Executive only shows up as a plot twist or for the finale
+      this.tUfo = 45;
       this.tShower = 200;
       this.tNest = 160;
       if (save) {
@@ -121,6 +122,8 @@ export class Game {
     this.sound.play('sting');
   }
   float(text, x, y, size = 15, life = 1.4) {
+    // in the story the screen stays readable: a handful of floating texts at most
+    if (this.mode === 'story' && this.floaters.length >= 5) this.floaters.shift();
     // stack texts that pop up at the same time so they stay readable
     let z = 46;
     for (const f of this.floaters) if (f.t < 0.8 && Math.abs(f.x - x) + Math.abs(f.y - y) < 200) z = Math.max(z, f.z + 24);
@@ -231,8 +234,8 @@ export class Game {
     if (this.threat > this.level) {
       this.level = this.threat;
       const th = L.THREAT[this.level];
-      this.showBanner('THREAT LEVEL ' + (this.level + 1), th.name);
-      this.say(th.line, true);
+      if (this.mode !== 'story') this.showBanner('THREAT LEVEL ' + (this.level + 1), th.name);
+      this.say(th.line, this.mode !== 'story');
       this.vultures.push(this.makeVulture());
     }
     if (day.ph !== this.phase) {
@@ -249,7 +252,7 @@ export class Game {
     // regular alien spawns (the story keeps it calmer: it is an adventure, not a massacre)
     const alive = this.enemies.length;
     const story = this.mode === 'story';
-    const cap = story ? Math.min(90, (this.act === 0 ? 4 : 8 + this.act * 7) + t * 0.035) : Math.min(140, 12 + t * 0.13);
+    const cap = story ? Math.min(90, (this.act === 0 ? 3 : 8 + this.act * 7) + t * 0.035) : Math.min(140, 12 + t * 0.13);
     const rate = story ? (this.act === 0 ? 0.12 : 0.22 + this.act * 0.1 + t * 0.0012) * (1 + day.dark * 0.9) : (0.45 + t * 0.007) * (1 + day.dark * 0.6);
     this.tSpawn -= dt;
     if (this.tSpawn <= 0) {
@@ -272,14 +275,14 @@ export class Game {
         if (p.car && Math.random() < 0.55) victim = p.car;
         else victim = pick(near(this.cars.filter((c) => !c.wreck && c !== p.car && !c.lift), 900)) || null;
         if (victim) this.spawnUfo('abduct', victim, 'car');
-        else this.spawnUfo('drop');
+        else if (!(story && this.act === 0)) this.spawnUfo('drop');
       } else if (r < 0.58) {
         const cows = near(this.cows.filter((c) => c.state !== 'abducted' && !c.target), 900);
         const civs = near(this.civs.filter((c) => !c.taken), 700);
         if (cows.length && (Math.random() < 0.5 || !civs.length)) this.spawnUfo('abduct', pick(cows), 'cow');
         else if (civs.length) this.spawnUfo('abduct', pick(civs), 'civ');
-        else this.spawnUfo('drop');
-      } else if (alive < cap + 10) this.spawnUfo('drop');
+        else if (!(story && this.act === 0)) this.spawnUfo('drop');
+      } else if (alive < cap + 10 && !(story && this.act === 0)) this.spawnUfo('drop');
     }
 
     this.tNest -= dt;
@@ -342,7 +345,7 @@ export class Game {
 
     this.tAmbient -= dt;
     if (this.tAmbient <= 0) {
-      this.tAmbient = rand(18, 30);
+      this.tAmbient = story ? rand(70, 110) : rand(18, 30);
       this.say(pick(L.AMBIENT));
     }
 
@@ -488,7 +491,7 @@ export class Game {
     if (!s) return;
     const type = Math.random() < 0.22 ? 'civ_tinfoil' : pick(CIVS.slice(0, 2));
     this.civs.push(this.newCiv(type, s.x, s.y));
-    if (Math.random() < 0.15) this.say(pick(L.CIV_SPAWN));
+    if (Math.random() < 0.15 && this.mode !== 'story') this.say(pick(L.CIV_SPAWN));
   }
 
   spawnTumbleweed() {

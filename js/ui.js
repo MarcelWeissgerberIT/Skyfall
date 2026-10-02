@@ -272,9 +272,12 @@ export class UI {
     ctx.globalAlpha = 1;
     return h;
   }
-  text(s, x, y, size, align = 0, alpha = 1) {
+  // live = text that changes every frame (typewriter): drawn letter by letter, never cached
+  text(s, x, y, size, align = 0, alpha = 1, live = false) {
+    if (alpha <= 0.01 || !s) return;
     this.ctx.globalAlpha = alpha;
-    this.font.draw(this.ctx, s, x, y, size, align);
+    if (live) this.font.draw(this.ctx, s, x, y, size, align);
+    else this.font.drawCached(this.ctx, s, x, y, size, align, this.dpr);
     this.ctx.globalAlpha = 1;
   }
   fitSize(s, size, maxW) {
@@ -346,7 +349,7 @@ export class UI {
           this.ctx.fillStyle = 'rgba(6,10,30,0.35)';
           this.ctx.fillRect(0, 0, this.W, this.H);
           this.btn('dlgbg', 0, 0, this.W, this.H, () => {});
-          this.adv.drawDialog(g, (this.W - w) / 2, this.H - this.safe.b - h - 14 * u, w, h);
+          this.adv.drawDialog(g, (this.W - w) / 2, this.H - this.safe.b - h - 14 * u, w, h, true);
         }
         if (this.adv.bagOpen) this.adv.drawBag(g);
         if (this.adv.journal) this.adv.drawJournal(g, renderer);
@@ -367,7 +370,160 @@ export class UI {
     }
   }
 
+  // Story mode: one slim row of status, one objective bar with a direction arrow, and the radio.
+  drawStoryHud(g, r) {
+    const ctx = this.ctx, u = this.u, p = g.player;
+    const pad = 10 * u;
+    const top = this.safe.t + pad, left = this.safe.l + pad, right = this.W - this.safe.r - pad;
+    // left: health, and the ratings under it
+    const beat = p.hp < 30 ? 1 + Math.max(0, Math.sin(this.t * 9)) * 0.18 : 1;
+    const hs = 30 * u * beat;
+    this.img('icon_heart', left + 15 * u - hs / 2, top + 13 * u - hs / 2, hs);
+    const barW = Math.min(118 * u, this.W * 0.3);
+    this.bar(left + 36 * u, top + 6 * u, barW, 11 * u, p.hp / p.maxHp, '#b3121b', '#ff5b4a');
+    const rk = g.ratings / 100;
+    this.img('icon_camera', left + 34 * u, top + 21 * u, 15 * u);
+    this.bar(left + 54 * u, top + 25 * u, barW - 18 * u, 5 * u, rk, rk < 0.2 ? '#b3121b' : '#a3218f', rk < 0.2 ? '#ff5b4a' : '#ff6ff0');
+    if (g.onAir && Math.floor(this.t * 2) % 2) {
+      ctx.fillStyle = '#ff2b2b';
+      ctx.beginPath();
+      ctx.arc(left + 36 * u + barW + 6 * u, top + 27 * u, 3.5 * u, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // right: pause, notebook, bag, coupons
+    const bs = 38 * u;
+    const pdown = this.btn('pause', right - bs, top, bs, bs, () => this.cb.pause(), true);
+    this.img('btn_pause', right - bs * (pdown ? 0.95 : 1), top, bs * (pdown ? 0.9 : 1));
+    this.btn('journal', right - bs * 2 - 6 * u, top, bs, bs, () => (this.adv.journal = 'tasks'), true);
+    this.img('btn_journal', right - bs * 2 - 6 * u, top, bs);
+    this.btn('bag', right - bs * 3 - 12 * u, top, bs, bs, () => (this.adv.bagOpen = true), true);
+    this.img('btn_bag', right - bs * 3 - 12 * u, top, bs);
+    if (g.inv.length) {
+      this.roundRect(right - bs * 2 - 24 * u, top + bs - 15 * u, 18 * u, 16 * u, 8 * u, '#c4231b', '#0d1a44', 1.5 * u);
+      this.text(String(g.inv.length), right - bs * 2 - 15 * u, top + bs - 12 * u, 10 * u, 0.5);
+    }
+    const cs = String(g.coupons);
+    const cw = this.font.measure(cs, 14 * u);
+    const cx0 = right - bs * 3 - 20 * u - cw;
+    this.img('icon_coupon', cx0 - 24 * u, top + 6 * u, 22 * u);
+    this.text(cs, cx0, top + 11 * u, 14 * u, 0);
+    // the car, while driving: toughness and fuel
+    let y = top + 44 * u;
+    const c = p.car;
+    if (c) {
+      this.img('btn_drive', left, y - 3 * u, 18 * u);
+      this.bar(left + 24 * u, y, 60 * u, 6 * u, c.hp / c.maxHp, '#1b5fc7', '#7fb4ff');
+      const low = c.fuel < c.maxFuel * 0.15;
+      this.img('icon_fuel', left + 92 * u, y - 4 * u, 14 * u);
+      this.bar(left + 110 * u, y, 50 * u, 6 * u, c.fuel / c.maxFuel, low ? '#b3121b' : '#c7841b', low ? '#ff5b4a' : '#ffd36a');
+      for (let i = 0; i < c.V.seats; i++) this.img('icon_seat', left + 170 * u + i * 13 * u, y - 4 * u, 11 * u, undefined, i < c.seats.length ? 1 : 0.28);
+      y += 16 * u;
+    }
+    // the objective bar: what to do, with an arrow that points there
+    const o = g.dialog ? null : g.objective();
+    const nav = g.navTarget();
+    if (o) {
+      const ph = 30 * u, pw = right - left;
+      const down = this.btn('objective', left, y, pw, ph, () => (this.adv.journal = 'tasks'), true);
+      this.roundRect(left, y, pw, ph, ph / 2, down ? 'rgba(242,194,59,0.35)' : 'rgba(11,20,51,0.82)', '#f2c23b', 1.5 * u);
+      let tx = left + 12 * u;
+      let dist = '';
+      if (nav) {
+        const [ax, ay] = r.project(nav.x, nav.y);
+        const [bx, by] = r.project(p.x, p.y);
+        const ang = Math.atan2(ay - by, ax - bx);
+        const d = Math.hypot(nav.x - p.x, nav.y - p.y);
+        dist = d < 260 ? 'HERE' : Math.round(d / 16) + ' M';
+        ctx.save();
+        ctx.translate(left + ph / 2 + 2 * u, y + ph / 2);
+        ctx.rotate(ang);
+        ctx.fillStyle = g.waypoint ? '#5dff8a' : '#f2c23b';
+        ctx.beginPath();
+        ctx.moveTo(10 * u, 0);
+        ctx.lineTo(-6 * u, -7 * u);
+        ctx.lineTo(-2 * u, 0);
+        ctx.lineTo(-6 * u, 7 * u);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+        tx = left + ph + 6 * u;
+      }
+      const dw = dist ? this.font.measure(dist, 10 * u) + 14 * u : 0;
+      const label = g.waypoint ? 'WAYPOINT: ' + g.waypoint.name : o.text;
+      const size = this.fitSize(label, 10.5 * u, right - tx - dw - 8 * u);
+      this.text(label, tx, y + ph / 2 - size * 0.55, size, 0, 0.95);
+      if (dist) this.text(dist, right - 12 * u, y + ph / 2 - 6 * u, 10 * u, 1, 0.8);
+      y += ph + 6 * u;
+    }
+    // Zorp's shot list on the radio
+    if (g.mission) {
+      const m = g.mission;
+      const label = 'SHOT: ' + MISSIONS[m.type].text + (m.need > 1 ? '  ' + m.count + '/' + m.need : '') + '  ' + fmtTime(Math.max(0, m.limit - m.t));
+      const size = this.fitSize(label, 9.5 * u, right - left);
+      this.text(label, this.W / 2, y, size, 0.5, 0.85);
+      y += 16 * u;
+      const tg = g.missionTarget();
+      if (tg) this.marker(r, tg, '#e45cff', top);
+    }
+    // the radio
+    this.drawTicker(g, y);
+    y += g.tickerCur ? 50 * u : 0;
+    this.adv.drawToasts(g, y);
+    // the objective: marker over it when it is on screen
+    if (nav && !g.scene) {
+      const [sx, sy] = r.project(nav.x, nav.y, 110);
+      if (sx > 0 && sx < this.W && sy > top + 60 * u && sy < this.H) this.marker(r, nav, g.waypoint ? '#5dff8a' : '#f2c23b', top);
+      if (g.waypoint && Math.hypot(g.waypoint.x - p.x, g.waypoint.y - p.y) < 220) g.waypoint = null;
+    }
+    // the nearest door gets a label
+    let door = null, dd = 280;
+    for (const d of g.world.doors) {
+      const k = Math.hypot(d.x - p.x, d.y - p.y);
+      if (k < dd) (dd = k), (door = d);
+    }
+    if (door && !p.car) {
+      const [dx, dy] = r.project(door.prop.x, door.prop.y, 0);
+      const gm = r.propGeom(door.prop);
+      const hy = dy - gm.h * gm.ay * r.zoom - 12 * u + Math.sin(this.t * 3) * 3 * u;
+      this.img('btn_enter', dx - 14 * u, hy - 28 * u, 28 * u, 28 * u);
+      const nm = SCENES[door.scene].name;
+      this.text(nm, dx, hy + 2 * u, this.fitSize(nm, 9.5 * u, 200 * u), 0.5);
+    }
+    // holding an item: show it, with a cancel button
+    if (g.held && !this.adv.bagOpen) {
+      const it = ITEMS[g.held];
+      const lbl = 'USING: ' + it.name;
+      const ls = this.fitSize(lbl, 11 * u, this.W * 0.6);
+      const lw = this.font.measure(lbl, ls) + 76 * u;
+      const lx = (this.W - lw) / 2, ly = this.H - this.safe.b - 132 * u;
+      this.roundRect(lx, ly, lw, 34 * u, 17 * u, 'rgba(11,20,51,0.92)', '#f2c23b', 2 * u);
+      this.img(it.icon, lx + 6 * u, ly + 3 * u, 28 * u, 28 * u);
+      this.text(lbl, lx + 40 * u, ly + 11 * u, ls, 0);
+      this.btn('heldx', lx + lw - 34 * u, ly, 34 * u, 34 * u, () => (g.held = null), true);
+      this.text('X', lx + lw - 17 * u, ly + 9 * u, 14 * u, 0.5);
+    }
+    // search progress ring over Dale
+    if (g.search) {
+      const [px, py] = r.project(p.x, p.y, 72);
+      const k = g.search.t / g.search.dur;
+      ctx.lineWidth = 6 * u;
+      ctx.strokeStyle = 'rgba(11,20,51,0.8)';
+      ctx.beginPath();
+      ctx.arc(px, py, 14 * u, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.lineWidth = 4 * u;
+      ctx.strokeStyle = '#f2c23b';
+      ctx.beginPath();
+      ctx.arc(px, py, 14 * u, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2);
+      ctx.stroke();
+    }
+    if (g.mother && g.mother.hunt) this.text('THE EXECUTIVE IS HUNTING YOU', this.W / 2, this.H - this.safe.b - 170 * u, 11 * u, 0.5, 0.6 + 0.4 * Math.sin(this.t * 6));
+    if (g.banner) this.drawBanner(g.banner);
+    this.drawControls(g);
+  }
+
   drawHud(g, r) {
+    if (g.mode === 'story') return this.drawStoryHud(g, r);
     const ctx = this.ctx, u = this.u, p = g.player;
     const pad = 12 * u;
     const top = this.safe.t + pad, left = this.safe.l + pad, right = this.W - this.safe.r - pad;
@@ -376,28 +532,15 @@ export class UI {
     const hs = 34 * u * beat;
     this.img('icon_heart', left + 17 * u - hs / 2, top + 16 * u - hs / 2, hs);
     const ps = 40 * u;
-    const story = g.mode === 'story';
     const ks = String(g.rescued);
     const kw = this.font.measure(ks, 18 * u);
-    const resX = story ? right - ps * 3 - 16 * u : right - ps - 12 * u - kw - 26 * u;
+    const resX = right - ps - 12 * u - kw - 26 * u;
     const barW = Math.min(130 * u, resX - left - 52 * u);
     this.bar(left + 40 * u, top + 9 * u, barW, 14 * u, p.hp / p.maxHp, '#b3121b', '#ff5b4a');
     const pdown = this.btn('pause', right - ps, top, ps, ps, () => this.cb.pause(), true);
     this.img('btn_pause', right - ps * (pdown ? 0.95 : 1), top, ps * (pdown ? 0.9 : 1));
-    if (story) {
-      // the notebook (tasks, gangs, map) and the bag
-      this.btn('journal', right - ps * 2 - 6 * u, top, ps, ps, () => (this.adv.journal = 'tasks'), true);
-      this.img('btn_journal', right - ps * 2 - 6 * u, top, ps);
-      this.btn('bag', right - ps * 3 - 12 * u, top, ps, ps, () => (this.adv.bagOpen = true), true);
-      this.img('btn_bag', right - ps * 3 - 12 * u, top, ps);
-      if (g.inv.length) {
-        this.roundRect(right - ps * 2 - 22 * u, top + ps - 16 * u, 20 * u, 18 * u, 9 * u, '#c4231b', '#0d1a44', 1.5 * u);
-        this.text(String(g.inv.length), right - ps * 2 - 12 * u, top + ps - 13 * u, 11 * u, 0.5);
-      }
-    } else {
-      this.text(ks, right - ps - 8 * u - kw, top + 10 * u, 18 * u);
-      this.img('icon_seat', resX, top + 3 * u, 23 * u);
-    }
+    this.text(ks, right - ps - 8 * u - kw, top + 10 * u, 18 * u);
+    this.img('icon_seat', resX, top + 3 * u, 23 * u);
     // row 2: car / fuel (left), clock + threat (centre), damage (right)
     const ay = top + 42 * u;
     const c = p.car;
@@ -424,80 +567,12 @@ export class UI {
     const th = THREAT[g.level].name;
     const thSize = this.fitSize(th, 10 * u, this.W * 0.36);
     this.text(th, cx + 6 * u, ay + 30 * u, thSize, 0.5, 0.85);
-    if (story) {
-      // coupons (the currency of the apocalypse)
-      const cs = String(g.coupons);
-      const cw = this.font.measure(cs, 16 * u);
-      this.img('icon_coupon', right - cw - 30 * u, ay - 2 * u, 26 * u);
-      this.text(cs, right, ay + 3 * u, 16 * u, 1);
-      // ratings: the Network is always watching
-      const rx = cx - 62 * u, ry = ay + 46 * u;
-      this.img('icon_camera', rx - 26 * u, ry - 9 * u, 22 * u);
-      const rk = g.ratings / 100;
-      this.bar(rx, ry - 2 * u, 124 * u, 7 * u, rk, rk < 0.2 ? '#b3121b' : '#a3218f', rk < 0.2 ? '#ff5b4a' : '#ff6ff0');
-      if (g.rateFlash > 0) this.text('+', rx + 124 * u * rk, ry - 16 * u, 12 * u, 0.5, g.rateFlash);
-      if (g.onAir) {
-        this.ctx.fillStyle = Math.floor(this.t * 2) % 2 ? '#ff2b2b' : '#7a1010';
-        this.ctx.beginPath();
-        this.ctx.arc(rx + 136 * u, ry + 1.5 * u, 4 * u, 0, Math.PI * 2);
-        this.ctx.fill();
-        this.text('ON AIR', rx + 144 * u, ry - 3 * u, 8.5 * u, 0, 0.9);
-      }
-    } else {
-      const dmg = fmtNum(g.damage);
-      this.text('DAMAGE', right, ay + 2 * u, 9 * u, 1, 0.75);
-      this.text(dmg, right, ay + 15 * u, this.fitSize(dmg, 14 * u, this.W * 0.26), 1);
-    }
-    // story: the current objective
-    let tickY = top + (p.car ? 104 : 90) * u;
-    if (story && !g.dialog) {
-      const o = g.objective();
-      const oy = ay + (p.car ? 62 : 58) * u;
-      const ot = '* ' + o.text;
-      const os = this.fitSize(ot, 10 * u, this.W - 30 * u);
-      const ol = this.font.wrap(ot, os, this.W - 30 * u).slice(0, 2);
-      ol.forEach((ln, i) => this.text(ln, cx, oy + i * os * 1.25, os, 0.5, 0.85));
-      tickY = oy + ol.length * os * 1.25 + 8 * u;
-      const tg = o.target && g.landmarkPos(o.target);
-      if (tg && !g.scene) this.marker(r, tg, '#f2c23b', top);
-      // door markers over enterable buildings nearby
-      for (const d of g.world.doors) {
-        const dd = Math.hypot(d.x - p.x, d.y - p.y);
-        if (dd > 700) continue;
-        const [dx, dy] = r.project(d.prop.x, d.prop.y, 0);
-        const gm = r.propGeom(d.prop);
-        const hy = dy - gm.h * gm.ay * r.zoom - 18 * u + Math.sin(this.t * 3 + d.x) * 4 * u;
-        if (dx < -40 || dx > this.W + 40 || hy < -40 || hy > this.H) continue;
-        const a = clamp((700 - dd) / 250, 0, 1) * (dd < 120 ? 1 : 0.85);
-        this.img('btn_enter', dx - 15 * u, hy - 30 * u, 30 * u, 30 * u, a);
-        const nm = SCENES[d.scene].name;
-        this.text(nm, dx, hy + 2 * u, this.fitSize(nm, 9.5 * u, 200 * u), 0.5, a);
-      }
-      // waypoint from the map
-      const wp = this.adv.waypoint;
-      if (wp) {
-        if (Math.hypot(wp.x - p.x, wp.y - p.y) < 220) this.adv.waypoint = null;
-        else this.marker(r, wp, '#5dff8a', top);
-      }
-    }
+    const dmg = fmtNum(g.damage);
+    this.text('DAMAGE', right, ay + 2 * u, 9 * u, 1, 0.75);
+    this.text(dmg, right, ay + 15 * u, this.fitSize(dmg, 14 * u, this.W * 0.26), 1);
+    const tickY = top + (p.car ? 104 : 90) * u;
     // ticker
     this.drawTicker(g, tickY);
-    if (story) {
-      this.adv.drawToasts(g, tickY + (g.tickerCur ? 54 * u : 0));
-      // holding an item: show it, with a cancel button
-      if (g.held && !this.adv.bagOpen) {
-        const it = ITEMS[g.held];
-        const lbl = 'USING: ' + it.name + '  (TAP A TARGET)';
-        const ls = this.fitSize(lbl, 11 * u, this.W * 0.7);
-        const lw = this.font.measure(lbl, ls) + 70 * u;
-        const lx = (this.W - lw) / 2, ly = this.H - this.safe.b - 132 * u;
-        this.roundRect(lx, ly, lw, 34 * u, 17 * u, 'rgba(11,20,51,0.92)', '#f2c23b', 2 * u);
-        this.img(it.icon, lx + 6 * u, ly + 3 * u, 28 * u, 28 * u);
-        this.text(lbl, lx + 40 * u, ly + 11 * u, ls, 0);
-        this.btn('heldx', lx + lw - 30 * u, ly, 30 * u, 34 * u, () => (g.held = null), true);
-        this.text('X', lx + lw - 16 * u, ly + 9 * u, 14 * u, 0.5);
-      }
-    }
     // mothership health
     let by = tickY + (g.tickerCur ? 52 * u : 0);
     if (g.mother && g.mother.state === 'fight') {
@@ -533,7 +608,7 @@ export class UI {
     if (ev) {
       const followers = g.civs.some((c) => c.follow && !c.taken);
       const [ex, ey] = r.project(ev.x, ev.y, 70);
-      if (ex > 0 && ex < this.W && ey > 0 && ey < this.H) {
+      if (ex > 0 && ex < this.W && ey > 0 && ey < this.H && (followers || (p.car && p.car.seats.length))) {
         const t2 = 'EVAC BUS';
         this.text(t2, ex, ey - 8 * u, 12 * u, 0.5, 0.75 + 0.25 * Math.sin(this.t * 4));
       } else if (followers) this.edgeArrow(ex, ey, '#5dff8a', top);
@@ -626,8 +701,9 @@ export class UI {
     lines.forEach((ln, i) => {
       if (budget <= 0) return;
       const s = ln.slice(0, budget);
+      const live = budget < ln.length;
       budget -= ln.length + 1;
-      this.text(s, x + 42 * u, y + 9 * u + i * size * 1.3 - (1 - inK) * 20 * u, size, 0, a);
+      this.text(s, x + 42 * u, y + 9 * u + i * size * 1.3 - (1 - inK) * 20 * u, size, 0, a, live);
     });
   }
 
@@ -924,7 +1000,7 @@ export class UI {
     const y0 = H - this.safe.b - 60 * u - lines.length * size * 1.3;
     lines.forEach((ln, i) => {
       if (budget <= 0) return;
-      this.text(ln.slice(0, budget), W / 2 - this.font.measure(ln, size) / 2, y0 + i * size * 1.3, size, 0);
+      this.text(ln.slice(0, budget), W / 2 - this.font.measure(ln, size) / 2, y0 + i * size * 1.3, size, 0, 1, budget < ln.length);
       budget -= ln.length + 1;
     });
     const sk = 'SKIP';

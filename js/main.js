@@ -88,7 +88,6 @@ function start(A, font) {
     newRecord = false;
     ui.adv.bagOpen = false;
     ui.adv.journal = null;
-    ui.adv.waypoint = null;
     ui.adv.endStep = 0;
     ui.state = 'play';
     sound.musicOn = true;

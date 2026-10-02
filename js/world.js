@@ -954,23 +954,57 @@ export class World {
     }
     if (s === g) return [{ x: x1, y: y1 }];
     const gi = g % N, gj = (g / N) | 0;
-    const open = [s];
-    const came = new Map();
-    const cost = new Map([[s, 0]]);
+    // A* with a binary heap and typed arrays (no allocations per node)
+    if (!this.pf) this.pf = { cost: new Float32Array(N * N), came: new Int32Array(N * N), seen: new Uint32Array(N * N), stamp: 0, heap: new Int32Array(N * N * 8), hf: new Float32Array(N * N * 8) };
+    const P = this.pf;
+    const stamp = ++P.stamp;
+    const heap = P.heap, hf = P.hf;
+    let hn = 0;
+    const push = (k, f) => {
+      let i = hn++;
+      while (i > 0) {
+        const pa = (i - 1) >> 1;
+        if (hf[pa] <= f) break;
+        heap[i] = heap[pa];
+        hf[i] = hf[pa];
+        i = pa;
+      }
+      heap[i] = k;
+      hf[i] = f;
+    };
+    const pop = () => {
+      const top = heap[0];
+      const k = heap[--hn], f = hf[hn];
+      let i = 0;
+      for (;;) {
+        let c = 2 * i + 1;
+        if (c >= hn) break;
+        if (c + 1 < hn && hf[c + 1] < hf[c]) c++;
+        if (hf[c] >= f) break;
+        heap[i] = heap[c];
+        hf[i] = hf[c];
+        i = c;
+      }
+      heap[i] = k;
+      hf[i] = f;
+      return top;
+    };
     const h = (k) => {
       const dx = Math.abs((k % N) - gi), dy = Math.abs(((k / N) | 0) - gj);
       return Math.max(dx, dy) + 0.41 * Math.min(dx, dy);
     };
-    const f = new Map([[s, h(s)]]);
-    let n = 0;
-    while (open.length && n++ < maxNodes) {
-      let bi = 0;
-      for (let i = 1; i < open.length; i++) if (f.get(open[i]) < f.get(open[bi])) bi = i;
-      const k = open[bi];
-      open[bi] = open[open.length - 1];
-      open.pop();
-      if (k === g) break;
-      const i = k % N, j = (k / N) | 0;
+    P.seen[s] = stamp;
+    P.cost[s] = 0;
+    P.came[s] = -1;
+    push(s, h(s));
+    let n = 0, found = false;
+    while (hn && n++ < maxNodes * 4) {
+      const k = pop();
+      if (k === g) {
+        found = true;
+        break;
+      }
+      const i = k % N, j = (k / N) | 0, ck = P.cost[k];
       for (let dj = -1; dj <= 1; dj++)
         for (let di = -1; di <= 1; di++) {
           if (!di && !dj) continue;
@@ -979,18 +1013,18 @@ export class World {
           const m = y * N + x;
           if (this.blocked[m]) continue;
           if (di && dj && (this.blocked[j * N + x] || this.blocked[y * N + i])) continue;
-          const c = cost.get(k) + (di && dj ? 1.41 : 1);
-          if (c < (cost.has(m) ? cost.get(m) : 1e9)) {
-            cost.set(m, c);
-            came.set(m, k);
-            f.set(m, c + h(m));
-            if (!open.includes(m)) open.push(m);
+          const c = ck + (di && dj ? 1.41 : 1);
+          if (P.seen[m] !== stamp || c < P.cost[m]) {
+            P.seen[m] = stamp;
+            P.cost[m] = c;
+            P.came[m] = k;
+            if (hn < heap.length) push(m, c + h(m));
           }
         }
     }
-    if (!came.has(g)) return null;
+    if (!found) return null;
     const path = [];
-    for (let k = g; k !== s; k = came.get(k)) path.push({ x: ((k % N) + 0.5) * TILE, y: (((k / N) | 0) + 0.5) * TILE });
+    for (let k = g; k !== s; k = P.came[k]) path.push({ x: ((k % N) + 0.5) * TILE, y: (((k / N) | 0) + 0.5) * TILE });
     path.reverse();
     path[path.length - 1] = { x: x1, y: y1 };
     return path;

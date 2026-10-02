@@ -128,6 +128,7 @@ export const AdventureMixin = {
     this.caption = null;
     this.endingId = null;
     this.keypadOn = false;
+    this.waypoint = null;
     this.spin = 0;
     this.act = 0;
     this.saveT = 10;
@@ -236,6 +237,12 @@ export const AdventureMixin = {
     this.sound.play('radio');
     this.say(hint(this), true);
     this.hintT = 6;
+  },
+  // where the navigation arrow points: a waypoint from the map, or the current objective
+  navTarget() {
+    if (this.waypoint) return this.waypoint;
+    const o = mainObjective(this);
+    return o && o.target ? this.landmarkPos(o.target) : null;
   },
   zorpWhere() {
     return this.f('gateOpen') ? 'office' : 'diner';

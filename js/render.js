@@ -8,6 +8,7 @@ import { carSprite } from './vehicles.js';
 const SIZE = { player: 50, civ: 44, cow: 58, pickup: 34, core: 22, dog: 34, npc: 46, drone: 40 };
 const NPC_SPRITE = { hoa: 'npc_hoa', biker: 'npc_biker', cultist: 'npc_cultist', warden: 'npc_warden' };
 
+const GROUND_TILE = 320; // css px per cached ground tile (screen aligned)
 const TEX_SCALE = { sand: 0.375, dirt: 0.375, grass: 0.22, concrete: 0.25, asphalt: 0.3 };
 const TEX_OF = ['sand', 'dirt', 'grass', 'concrete', 'asphalt'];
 const PICKUP_GLOW = { fuel: 'orange', repair: 'yellow', medkit: 'red', nitro: 'magenta' };
@@ -42,6 +43,9 @@ export class Renderer {
     this.c8 = document.createElement('canvas');
     this.band = document.createElement('canvas');
     this.filterOK = typeof this.ctx.filter === 'string';
+    // phones start without the canvas tilt-shift blur (the CSS haze keeps the miniature look)
+    const touch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    this.quality = touch ? 2 : 0;
     this.patterns = {};
     for (const k of TEX_OF) {
       const p = this.ctx.createPattern(A.tex[k], 'repeat');
@@ -68,7 +72,6 @@ export class Renderer {
     this.c4.width = Math.ceil(bw / 4); this.c4.height = Math.ceil(bh / 4);
     this.c8.width = Math.ceil(bw / 8); this.c8.height = Math.ceil(bh / 8);
     this.band.width = Math.ceil(bw / 2); this.band.height = Math.ceil(bh / 2);
-    this.vignette = makeVignette(this.cv.width, this.cv.height);
   }
 
   // world radius that covers the screen (used for spawning off-screen)
@@ -91,7 +94,7 @@ export class Renderer {
     // adaptive quality: if frames stay slow for a while, trade resolution / post effects for speed
     if (dt > 0) {
       this.slow = dt > 1 / 38 ? (this.slow || 0) + dt : Math.max(0, (this.slow || 0) - dt * 0.5);
-      if (this.slow > 3 && (this.quality || 0) < 3) {
+      if (this.slow > 2 && (this.quality || 0) < 3) {
         this.quality = (this.quality || 0) + 1;
         this.slow = 0;
         this.resize();
@@ -132,9 +135,6 @@ export class Renderer {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
-    ctx.fillStyle = '#c99b63';
-    ctx.fillRect(0, 0, this.W, this.H);
-
     this.drawGround(g);
     this.drawWorld(g);
     this.drawAir(g);
@@ -143,7 +143,6 @@ export class Renderer {
     this.tiltShift();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1;
-    ctx.drawImage(this.vignette, 0, 0);
     if (g.hurtFlash > 0) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       const gr = ctx.createRadialGradient(this.W / 2, this.H / 2, Math.min(this.W, this.H) * 0.3, this.W / 2, this.H / 2, Math.max(this.W, this.H) * 0.7);
@@ -175,27 +174,31 @@ export class Renderer {
     this.ctx.setTransform(d * z * C, d * z * C * 0.5, -d * z * C, d * z * C * 0.5, d * this.ox, d * this.oy);
   }
 
-  // Ground is static: render it once per chunk of tiles, then just blit the chunks.
-  buildChunk(w, ci, cj) {
-    const CH = 8, S = CH * TILE, z = this.zoom, d = this.dpr, pad = 2;
-    const x0 = ci * S, y0 = cj * S;
-    const half = S * C * z;
+  // Ground is static: render it once per screen-aligned tile of the iso plane, then blit the tiles.
+  // Screen-aligned tiles never overlap (the old world-aligned diamonds drew every pixel twice).
+  buildTile(w, ti, tj) {
+    const T = GROUND_TILE, z = this.zoom, d = this.gd;
+    const u0 = ti * T, v0 = tj * T;
     const c = document.createElement('canvas');
-    c.width = Math.ceil((2 * half + pad * 2) * d);
-    c.height = Math.ceil((half + pad * 2) * d);
+    c.width = c.height = Math.ceil(T * d);
     const g = c.getContext('2d');
-    g.setTransform(d * z * C, d * z * C * 0.5, -d * z * C, d * z * C * 0.5, d * (half + pad), d * pad);
-    g.translate(-x0, -y0);
-    // clip to the chunk (slightly enlarged so neighbours overlap and no seams show)
-    g.beginPath();
-    g.rect(x0 - 1.5, y0 - 1.5, S + 3, S + 3);
-    g.clip();
+    g.setTransform(d * z * C, d * z * C * 0.5, -d * z * C, d * z * C * 0.5, -u0 * d, -v0 * d);
+    // world bounds of this tile
+    const inv = (u, v) => {
+      const a = u / (C * z), b = v / (C * 0.5 * z);
+      return [(a + b) / 2, (b - a) / 2];
+    };
+    const cs = [inv(u0, v0), inv(u0 + T, v0), inv(u0, v0 + T), inv(u0 + T, v0 + T)];
+    const x0 = Math.min(...cs.map((q) => q[0])) - 4, x1 = Math.max(...cs.map((q) => q[0])) + 4;
+    const y0 = Math.min(...cs.map((q) => q[1])) - 4, y1 = Math.max(...cs.map((q) => q[1])) + 4;
+    const i0 = Math.floor(x0 / TILE) - 1, i1 = Math.floor(x1 / TILE) + 1;
+    const j0 = Math.floor(y0 / TILE) - 1, j1 = Math.floor(y1 / TILE) + 1;
     const paths = [new Path2D(), new Path2D(), new Path2D(), new Path2D(), new Path2D()];
     const used = [0, 0, 0, 0, 0];
-    for (let j = cj * CH - 1; j <= cj * CH + CH; j++) {
+    for (let j = j0; j <= j1; j++) {
       let runT = -1, runS = 0;
-      for (let i = ci * CH - 1; i <= ci * CH + CH + 1; i++) {
-        const t = i <= ci * CH + CH ? w.terrain(i, j) : -1;
+      for (let i = i0; i <= i1 + 1; i++) {
+        const t = i <= i1 ? w.terrain(i, j) : -1;
         if (t !== runT) {
           if (runT >= 0) {
             paths[runT].rect(runS * TILE - 0.6, j * TILE - 0.6, (i - runS) * TILE + 1.2, TILE + 1.2);
@@ -211,12 +214,13 @@ export class Renderer {
       g.fillStyle = this.patterns[TEX_OF[t]];
       g.fill(paths[t]);
     }
+    const inBox = (ax0, ay0, ax1, ay1) => !(ax1 < x0 || ax0 > x1 || ay1 < y0 || ay0 > y1);
     // soft dirt patches in the desert (organic blobs instead of tile staircases)
     const patch = new Path2D(), rim = new Path2D();
     let any = false;
     for (const q of w.patches) {
       const r = q.r * 1.35;
-      if (q.x + r < x0 || q.x - r > x0 + S || q.y + r < y0 || q.y - r > y0 + S) continue;
+      if (!inBox(q.x - r, q.y - r, q.x + r, q.y + r)) continue;
       patch.moveTo(q.x + q.r, q.y);
       patch.arc(q.x, q.y, q.r, 0, Math.PI * 2);
       rim.moveTo(q.x + r, q.y);
@@ -233,7 +237,7 @@ export class Renderer {
     }
     // the HOA pool, crop circles and oil stains
     for (const q of w.pools || []) {
-      if (q.x1 < x0 || q.x0 > x0 + S || q.y1 < y0 || q.y0 > y0 + S) continue;
+      if (!inBox(q.x0 - 10, q.y0 - 10, q.x1 + 10, q.y1 + 10)) continue;
       g.fillStyle = '#f2efe6';
       g.fillRect(q.x0 - 10, q.y0 - 10, q.x1 - q.x0 + 20, q.y1 - q.y0 + 20);
       const gr = g.createLinearGradient(q.x0, q.y0, q.x1, q.y1);
@@ -252,7 +256,8 @@ export class Renderer {
       }
     }
     for (const q of w.circles || []) {
-      if (q.x + q.r * 1.6 < x0 || q.x - q.r * 1.6 > x0 + S || q.y + q.r * 1.6 < y0 || q.y - q.r * 1.6 > y0 + S) continue;
+      const R = q.r * 1.6;
+      if (!inBox(q.x - R, q.y - R, q.x + R, q.y + R)) continue;
       g.strokeStyle = 'rgba(90,60,30,0.38)';
       g.lineWidth = 10;
       for (const k of [1, 0.66, 0.33]) {
@@ -268,7 +273,7 @@ export class Renderer {
       }
     }
     for (const q of w.stains || []) {
-      if (q.x + q.r < x0 || q.x - q.r > x0 + S || q.y + q.r < y0 || q.y - q.r > y0 + S) continue;
+      if (!inBox(q.x - q.r, q.y - q.r, q.x + q.r, q.y + q.r)) continue;
       const gr = g.createRadialGradient(q.x, q.y, 0, q.x, q.y, q.r);
       gr.addColorStop(0, 'rgba(20,16,12,0.55)');
       gr.addColorStop(1, 'rgba(20,16,12,0)');
@@ -279,46 +284,69 @@ export class Renderer {
     }
     g.fillStyle = 'rgba(236,196,72,0.9)';
     for (const q of w.dashes) {
-      if (q.x1 < x0 || q.x0 > x0 + S || q.y1 < y0 || q.y0 > y0 + S) continue;
+      if (!inBox(q.x0, q.y0, q.x1, q.y1)) continue;
       g.fillRect(q.x0, q.y0, q.x1 - q.x0, q.y1 - q.y0);
     }
-    return { c, half, pad };
+    return { c, used: 0 };
   }
 
   drawGround(g) {
     const ctx = this.ctx, w = g.world;
-    if (this.chunkWorld !== w || this.chunkZoom !== this.zoom || this.chunkDpr !== this.dpr) {
+    const gd = Math.min(this.dpr, 1.5);
+    if (this.chunkWorld !== w || this.chunkZoom !== this.zoom || this.gd !== gd) {
       this.chunks = new Map();
       this.chunkWorld = w;
       this.chunkZoom = this.zoom;
-      this.chunkDpr = this.dpr;
+      this.gd = gd;
     }
     const b = this.visibleBounds(80);
-    const S = 8 * TILE;
-    const ci0 = Math.floor(b.x0 / S), ci1 = Math.floor(b.x1 / S);
-    const cj0 = Math.floor(b.y0 / S), cj1 = Math.floor(b.y1 / S);
-    const d = this.dpr;
+    const T = GROUND_TILE, d = this.dpr;
+    const ti0 = Math.floor(-this.ox / T), ti1 = Math.floor((this.W - this.ox) / T);
+    const tj0 = Math.floor(-this.oy / T), tj1 = Math.floor((this.H - this.oy) / T);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    let built = 0;
-    for (let cj = cj0; cj <= cj1; cj++)
-      for (let ci = ci0; ci <= ci1; ci++) {
-        const [sx, sy] = this.project(ci * S, cj * S);
-        const half = S * C * this.zoom;
-        if (sx + half < -10 || sx - half > this.W + 10 || sy > this.H + 10 || sy + half < -10) continue;
-        const key = ci * 4096 + cj;
-        let ch = this.chunks.get(key);
-        if (!ch) {
-          if (built > 10) continue; // spread the work over a few frames
-          ch = this.buildChunk(w, ci, cj);
-          this.chunks.set(key, ch);
-          built++;
+    // build the missing tiles closest to the centre first, a couple per frame (the first frame builds them all)
+    let budget = this.chunks.size ? 2 : 99;
+    const missing = [];
+    for (let tj = tj0; tj <= tj1; tj++)
+      for (let ti = ti0; ti <= ti1; ti++) {
+        const key = ti * 8192 + tj;
+        let tile = this.chunks.get(key);
+        const px0 = Math.round((ti * T + this.ox) * d), py0 = Math.round((tj * T + this.oy) * d);
+        const px1 = Math.round(((ti + 1) * T + this.ox) * d), py1 = Math.round(((tj + 1) * T + this.oy) * d);
+        if (!tile) {
+          missing.push([Math.abs(ti + 0.5 - (ti0 + ti1 + 1) / 2) + Math.abs(tj + 0.5 - (tj0 + tj1 + 1) / 2), ti, tj, px0, py0, px1, py1]);
+          continue;
         }
-        ch.used = this.time;
-        ctx.drawImage(ch.c, Math.round((sx - ch.half - ch.pad) * d), Math.round((sy - ch.pad) * d));
+        tile.used = this.time;
+        ctx.drawImage(tile.c, px0, py0, px1 - px0, py1 - py0);
       }
-    // drop chunks that have not been on screen for a while
-    if (this.chunks.size > 48)
-      for (const [k, ch] of this.chunks) if (this.time - ch.used > 4) this.chunks.delete(k);
+    missing.sort((a, b2) => a[0] - b2[0]);
+    for (const [, ti, tj, px0, py0, px1, py1] of missing) {
+      if (budget-- > 0) {
+        const tile = this.buildTile(w, ti, tj);
+        tile.used = this.time;
+        this.chunks.set(ti * 8192 + tj, tile);
+        ctx.drawImage(tile.c, px0, py0, px1 - px0, py1 - py0);
+      } else {
+        ctx.fillStyle = '#c99b63';
+        ctx.fillRect(px0, py0, px1 - px0, py1 - py0);
+      }
+    }
+    // prefetch one tile around the screen edge when the frame has time to spare
+    if (budget > 0 && !missing.length) {
+      outer: for (let tj = tj0 - 1; tj <= tj1 + 1; tj++)
+        for (let ti = ti0 - 1; ti <= ti1 + 1; ti++) {
+          const key = ti * 8192 + tj;
+          if (this.chunks.has(key)) continue;
+          const tile = this.buildTile(w, ti, tj);
+          tile.used = this.time;
+          this.chunks.set(key, tile);
+          break outer;
+        }
+    }
+    // drop tiles that have not been on screen for a while
+    if (this.chunks.size > 40)
+      for (const [k, tile] of this.chunks) if (this.time - tile.used > 3) this.chunks.delete(k);
     this.isoTransform();
     // flat decals
     for (const d of g.decals) {
@@ -360,6 +388,31 @@ export class Renderer {
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
+    }
+    // navigation arrow on the ground around Dale, pointing at the objective
+    const nav = g.mode === 'story' && g.navTarget ? g.navTarget() : null;
+    if (nav && !g.player.dead) {
+      const p = g.player;
+      const dx = nav.x - p.x, dy = nav.y - p.y, dist = Math.hypot(dx, dy);
+      if (dist > 260) {
+        const ux = dx / dist, uy = dy / dist, vx = -uy, vy = ux;
+        const R = p.car ? 125 : 80, L = p.car ? 52 : 40, Wd = p.car ? 32 : 24;
+        const bx = p.x + ux * R, by = p.y + uy * R;
+        ctx.globalAlpha = 0.75 + 0.2 * Math.sin(this.time * 5);
+        ctx.fillStyle = g.waypoint ? '#5dff8a' : '#f2c23b';
+        ctx.strokeStyle = 'rgba(13,26,68,0.9)';
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.moveTo(bx + ux * L, by + uy * L);
+        ctx.lineTo(bx + vx * Wd, by + vy * Wd);
+        ctx.lineTo(bx + vx * Wd * 0.35 - ux * L * 0.15, by + vy * Wd * 0.35 - uy * L * 0.15);
+        ctx.lineTo(bx - vx * Wd * 0.35 - ux * L * 0.15, by - vy * Wd * 0.35 - uy * L * 0.15);
+        ctx.lineTo(bx - vx * Wd, by - vy * Wd);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
     }
     // meteor warnings
     for (const m of g.meteors) {
