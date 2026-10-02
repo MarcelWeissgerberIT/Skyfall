@@ -5,6 +5,8 @@ import { World, N, WORLD } from './world.js';
 import * as L from './lines.js';
 import { InteractMixin } from './interact.js';
 import { VehicleMixin } from './vehicles.js';
+import { AdventureMixin } from './adventure.js';
+import { NpcMixin } from './npcs.js';
 
 export const ENEMY = {
   grunt: { sprite: 'alien_grunt', hp: 34, speed: 72, r: 10, dmg: 9, size: ['h', 52], drop: 0.12 },
@@ -15,17 +17,20 @@ export const ENEMY = {
 
 export const PICKUP_SPRITE = { fuel: 'pk_fuel', repair: 'pk_tools', medkit: 'pk_medkit', nitro: 'pk_core' };
 const CIVS = ['civ_dad', 'civ_curlers', 'civ_tinfoil'];
-const DAY = 160; // seconds per day/night cycle
+const DAY = 160; // seconds per day/night cycle (endless)
+const DAY_STORY = 260; // the story gives Dale more daylight to run errands in
 
 export class Game {
   constructor(sound) {
     this.sound = sound;
     this.viewR = 600;
-    this.reset();
+    this.reset('endless');
   }
 
-  reset() {
-    this.world = new World((Math.random() * 1e9) | 0);
+  // mode: 'story' (the adventure) or 'endless' (classic survival). save: story save data to resume.
+  reset(mode = 'endless', save = null) {
+    this.mode = mode;
+    this.world = new World(save ? save.seed : (Math.random() * 1e9) | 0);
     const s = this.world.start;
     this.player = {
       x: s.x + 24, y: s.y + 34, r: 11, hp: 100, maxHp: 100, cans: 1, nitro: 1,
@@ -75,6 +80,7 @@ export class Game {
     this.phase = 'day';
     this.milestones = new Set();
     this.houses = this.world.props.filter((q) => q.type.startsWith('house'));
+    this.initAdventure();
     this.initInteract();
     this.initVehicles();
     // Dale's first ride is parked right next to him
@@ -85,7 +91,19 @@ export class Game {
     this.dog = { x: s.x - 60, y: s.y + 90, r: 9, vx: 0, vy: 0, flip: false, walkT: 0, bark: 0, barkT: 2, petCd: 0 };
     this.sound.siren(false);
     this.sound.engine(false);
-    this.say(pick(L.INTRO), true);
+    this.initNpcs();
+    if (mode === 'story') {
+      this.tMother = 1e9; // in the story the Executive only shows up as a plot twist or for the finale
+      this.tShower = 200;
+      this.tNest = 160;
+      if (save) {
+        this.applySave(save);
+        this.say('PREVIOUSLY ON EARTH: THE FINAL SEASON...', true);
+      } else {
+        this.say("KEVIN (WALKIE): DALE? DALE, IT'S KEVIN. FROM HIGH SCHOOL. TINFOIL KEVIN. GUESS WHO WAS RIGHT. COME TO MY MOM'S BACKYARD. WEST SIDE. BRING SNACKS.", true);
+        this.say('TIP: TAP THINGS TO LOOK AT THEM. TAP THE GROUND TO WALK. DRAG TO DRIVE.', false);
+      }
+    } else this.say(pick(L.INTRO), true);
     for (let i = 0; i < 2; i++) this.vultures.push(this.makeVulture());
     for (let i = 0; i < 6; i++) this.spawnLoot();
     for (let i = 0; i < 5; i++) this.spawnCiv();
@@ -112,10 +130,12 @@ export class Game {
 
   // --- escalation helpers ----------------------------------------------------
   get threat() {
+    if (this.mode === 'story') return Math.min(L.THREAT.length - 1, this.act + Math.floor(this.time / 330));
     return Math.min(L.THREAT.length - 1, Math.floor(this.time / 90));
   }
   dayPhase() {
-    const c = ((this.time + 8) % DAY) / DAY;
+    const len = this.mode === 'story' ? DAY_STORY : DAY;
+    const c = ((this.time + 8) % len) / len;
     // 0..0.42 day, 0.42..0.52 dusk, 0.52..0.88 night, 0.88..1 dawn
     let dark = 0, warm = 0, ph = 'day';
     if (c < 0.42) {
@@ -142,6 +162,18 @@ export class Game {
     if (this.over) {
       this.overT += dt;
       this.updateFx(dt);
+      this.updateAdventure(dt);
+      return;
+    }
+    if (this.endingId) {
+      this.endingT = (this.endingT || 0) + dt;
+      return;
+    }
+    // interiors, conversations and the keypad pause the world
+    if (this.scene || this.dialog || this.keypadOn) {
+      this.updateAdventure(dt);
+      this.updateTicker(dt);
+      if (this.banner && (this.banner.t += dt) > this.banner.dur) this.banner = null;
       return;
     }
     this.time += dt;
@@ -167,6 +199,10 @@ export class Game {
     this.updateEBullets(dt);
     this.updateMeteors(dt);
     this.updatePickups(dt);
+    this.updateNpcs(dt);
+    this.updateDrones(dt);
+    this.updateRatings(dt);
+    this.updateAdventure(dt);
     this.updateAmbient(dt);
     this.updateFx(dt);
 
@@ -210,10 +246,11 @@ export class Game {
       this.phase = day.ph;
     }
 
-    // regular alien spawns
+    // regular alien spawns (the story keeps it calmer: it is an adventure, not a massacre)
     const alive = this.enemies.length;
-    const cap = Math.min(140, 12 + t * 0.13);
-    const rate = (0.45 + t * 0.007) * (1 + day.dark * 0.6);
+    const story = this.mode === 'story';
+    const cap = story ? Math.min(90, (this.act === 0 ? 4 : 8 + this.act * 7) + t * 0.035) : Math.min(140, 12 + t * 0.13);
+    const rate = story ? (this.act === 0 ? 0.12 : 0.22 + this.act * 0.1 + t * 0.0012) * (1 + day.dark * 0.9) : (0.45 + t * 0.007) * (1 + day.dark * 0.6);
     this.tSpawn -= dt;
     if (this.tSpawn <= 0) {
       this.tSpawn = 1 / rate;
@@ -227,7 +264,7 @@ export class Game {
     // saucers: drop aliens, beam up cows, people and cars
     this.tUfo -= dt;
     if (this.tUfo <= 0) {
-      this.tUfo = Math.max(6, 16 - t / 30) * rand(0.8, 1.2);
+      this.tUfo = (story ? Math.max(12, 30 - this.act * 4 - t / 60) : Math.max(6, 16 - t / 30)) * rand(0.8, 1.2);
       const r = Math.random();
       const near = (list, R) => list.filter((o) => dist2(o.x, o.y, p.x, p.y) < R * R);
       if (t > 40 && r < 0.3) {
@@ -254,7 +291,7 @@ export class Game {
     // meteor showers - the actual skyfall
     this.tShower -= dt;
     if (this.tShower <= 0) {
-      this.tShower = rand(55, 80) - Math.min(25, t / 30);
+      this.tShower = story ? rand(110, 170) : rand(55, 80) - Math.min(25, t / 30);
       this.showerT = 8 + this.level * 2;
       this.showBanner('SKYFALL!', 'METEOR SHOWER INBOUND');
       this.say(pick(L.METEOR), true);
@@ -295,7 +332,7 @@ export class Game {
       if (this.civs.filter((c) => !c.taken).length < Math.min(12, 6 + this.level)) this.spawnCiv();
     }
 
-    if (t > 170) {
+    if (t > (story ? 320 : 170)) {
       this.tFire -= dt;
       if (this.tFire <= 0) {
         this.tFire = Math.max(10, 30 - this.level * 3);
@@ -317,7 +354,7 @@ export class Game {
   }
 
   rollType() {
-    const t = this.time;
+    const t = this.mode === 'story' ? this.time * 0.6 + this.act * 60 : this.time;
     return weighted([
       ['grunt', 10],
       ['crawler', t > 50 ? 3 + t / 50 : 0],
@@ -488,9 +525,18 @@ export class Game {
     if (p.lastHit > 6 && p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + 1.0 * dt);
     if (p.car) return this.updatePlayerCar(dt, input);
 
-    // on foot: run, Dale, run
-    const [wx, wy] = screenDirToWorld(input.mx, input.my);
-    const mag = Math.min(1, Math.hypot(input.mx, input.my));
+    // on foot: run, Dale, run (or tap somewhere and he walks there himself)
+    let [wx, wy] = screenDirToWorld(input.mx, input.my);
+    let mag = Math.min(1, Math.hypot(input.mx, input.my));
+    if (mag > 0.1) p.walk = null;
+    else if (p.walk) {
+      const dir = this.walkStep(dt);
+      if (dir) {
+        wx = dir[0];
+        wy = dir[1];
+        mag = 1;
+      }
+    }
     const speed = 178 * mag;
     p.moving = mag > 0.1;
     p.x += wx * speed * dt;
@@ -687,6 +733,7 @@ export class Game {
   killEnemy(e) {
     e.dead = true;
     this.kills++;
+    this.rate(e.type === 'brute' ? 4 : 1);
     this.sound.play('splat');
     const big = e.type === 'brute';
     for (let i = 0; i < (big ? 18 : 8); i++) this.addFx('goo', e.x, e.y, 20 + rand(30), rand(-160, 160), rand(-160, 160), rand(80, 220), rand(0.5, 0.9));
@@ -710,9 +757,10 @@ export class Game {
         if (c.taken === 'probed' || c.taken === 'beamed') {
           c.z = (c.z || 0) + dt * (c.taken === 'beamed' ? 90 : 220);
           c.fade -= dt * (c.taken === 'beamed' ? 0.4 : 1.5);
-        } else if (c.taken === 'rescued' && ev) {
-          // shuffle over to the bus and get on
-          const dx = ev.x - c.x, dy = ev.y - 80 - c.y, d = Math.hypot(dx, dy) || 1;
+        } else if (c.taken === 'rescued' && (c.dest || ev)) {
+          // shuffle over to the bus (or the church) and get on
+          const dst = c.dest || { x: ev.x, y: ev.y - 80 };
+          const dx = dst.x - c.x, dy = dst.y - c.y, d = Math.hypot(dx, dy) || 1;
           c.x += (dx / d) * 130 * dt;
           c.y += (dy / d) * 130 * dt;
           c.walkT += dt;
@@ -735,7 +783,10 @@ export class Game {
         w.collide(c);
         const sdx = worldDirToScreen(c.vx, c.vy)[0];
         if (Math.abs(sdx) > 5) c.flip = sdx > 0;
-        if (c.follow && ev && dist2(c.x, c.y, ev.x, ev.y) < 150 * 150) this.rescueCiv(c);
+        if (c.follow) {
+          const z = this.dropZone(c.x, c.y, 150);
+          if (z) this.rescueCiv(c, z);
+        }
         continue;
       }
       // run away from the nearest alien
@@ -974,6 +1025,8 @@ export class Game {
     u.state = 'out';
     u.t = 0;
     u.spooked = true;
+    this.rate(5);
+    this.flashDrones();
     this.float(pick(L.SPOOKED), u.x, u.y, 13, 1.8);
     this.sound.play('beam');
     if (u.kind === 'cow' && v && v.state === 'abducted' && v.z < 999) {
@@ -997,6 +1050,7 @@ export class Game {
   abductCar(c) {
     const p = this.player;
     c.gone = true;
+    this.rate(5);
     this.flashes.push({ x: c.x, y: c.y, z: 60, r: 260, t: 0.5, color: 'cyan' });
     for (let i = 0; i < 16; i++) this.addFx('beamdot', c.x + rand(-30, 30), c.y + rand(-30, 30), rand(20, 80), 0, 0, rand(100, 220), rand(0.6, 1.2));
     if (c === p.car) {
@@ -1018,7 +1072,13 @@ export class Game {
     if (!m) return;
     const p = this.player;
     m.t += dt;
-    const tx = p.x - 120 + Math.cos(m.t * 0.3) * 160, ty = p.y - 120 + Math.sin(m.t * 0.3) * 160;
+    let tx = p.x - 120 + Math.cos(m.t * 0.3) * 160, ty = p.y - 120 + Math.sin(m.t * 0.3) * 160;
+    if (m.hunt) {
+      // the finale: she follows Dale everywhere, a little behind
+      tx = p.x - 60 + Math.cos(m.t * 0.5) * 90;
+      ty = p.y - 60 + Math.sin(m.t * 0.5) * 90;
+      if (this.f('power')) m.hunt = false, m.leaveT = 0;
+    }
     if (m.state === 'leave') {
       m.z += dt * 140;
       m.x -= dt * 300;
@@ -1026,7 +1086,7 @@ export class Game {
       if (m.z > 900) this.mother = null;
       return;
     }
-    const sp = m.state === 'in' ? 2.2 : 0.6;
+    const sp = m.state === 'in' ? 2.2 : m.hunt ? 0.9 : 0.6;
     m.x += (tx - m.x) * sp * dt;
     m.y += (ty - m.y) * sp * dt;
     if (m.state === 'in' && dist2(m.x, m.y, tx, ty) < 200 * 200) m.state = 'fight';
@@ -1048,7 +1108,7 @@ export class Game {
       m.dropCd = 7;
       for (let i = 0; i < 4; i++) this.spawnEnemy('crawler', m.x + rand(-60, 60), m.y + rand(-60, 60), 1.5);
     }
-    if (m.leaveT <= 0) {
+    if (m.leaveT <= 0 && !m.hunt) {
       m.state = 'leave';
       this.showBanner('MEETING ADJOURNED', 'YOU SURVIVED THE NETWORK EXECUTIVE');
       this.say(pick(L.MOTHER_LEAVE), true);
@@ -1082,6 +1142,9 @@ export class Game {
     n.hitT = 0.12;
     if (n.hp <= 0 && !n.dead) {
       n.dead = true;
+      this.rate(12);
+      this.flashDrones();
+      if (this.mode === 'story') this.earn(3);
       this.explode(n.x, n.y, 30, true);
       this.pickups.push({ type: 'nitro', x: n.x + 30, y: n.y, t: 0, life: 30, drop: true, pop: 1 });
       this.drop(n.x, n.y, 1);
@@ -1133,6 +1196,7 @@ export class Game {
       if (d2v < R * R) this.hurtCar(c, (big ? 90 : 50) * (1 - Math.sqrt(d2v) / R));
     }
     this.shake = Math.max(this.shake, big ? 16 : 11);
+    this.rate(big ? 3 : 1.5);
     this.flashes.push({ x, y, z: z + 20, r: big ? 420 : 300, t: 0.35, color: 'orange' });
     this.addFx('ring', x, y, 2, 0, 0, 0, 0.45, R * 1.1);
     for (let i = 0; i < (big ? 26 : 16); i++) this.addFx('fire', x + rand(-25, 25), y + rand(-25, 25), z + rand(0, 30), rand(-140, 140), rand(-140, 140), rand(40, 200), rand(0.4, 0.8), rand(1, 1.8));
@@ -1337,6 +1401,6 @@ function pushOut(e, x, y, r) {
   }
 }
 
-Object.assign(Game.prototype, VehicleMixin, InteractMixin);
+Object.assign(Game.prototype, VehicleMixin, InteractMixin, AdventureMixin, NpcMixin);
 
 export { N };

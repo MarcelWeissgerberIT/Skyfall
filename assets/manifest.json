@@ -239,6 +239,254 @@
   "dog": [
    160,
    90
+  ],
+  "npc_kevin": [
+   177,
+   520
+  ],
+  "npc_mel": [
+   259,
+   520
+  ],
+  "npc_brenda": [
+   191,
+   520
+  ],
+  "npc_gloria": [
+   325,
+   520
+  ],
+  "npc_barb": [
+   257,
+   520
+  ],
+  "npc_zorp": [
+   183,
+   520
+  ],
+  "npc_sheriff": [
+   277,
+   520
+  ],
+  "npc_hoa": [
+   138,
+   300
+  ],
+  "npc_biker": [
+   135,
+   300
+  ],
+  "npc_cultist": [
+   186,
+   300
+  ],
+  "npc_warden": [
+   86,
+   300
+  ],
+  "drone": [
+   131,
+   200
+  ],
+  "tower": [
+   284,
+   640
+  ],
+  "drive_in": [
+   443,
+   520
+  ],
+  "net_trailer": [
+   458,
+   460
+  ],
+  "checkpoint": [
+   420,
+   387
+  ],
+  "pylon": [
+   53,
+   220
+  ],
+  "church": [
+   414,
+   520
+  ],
+  "clubhouse": [
+   520,
+   369
+  ],
+  "diner": [
+   492,
+   500
+  ],
+  "motel": [
+   520,
+   436
+  ],
+  "saloon": [
+   516,
+   520
+  ],
+  "bunker": [
+   365,
+   400
+  ],
+  "sheriff_office": [
+   500,
+   489
+  ],
+  "billboard_a": [
+   253,
+   400
+  ],
+  "billboard_b": [
+   249,
+   400
+  ],
+  "burn_barrel": [
+   74,
+   150
+  ],
+  "barricade": [
+   357,
+   360
+  ],
+  "phone_booth": [
+   119,
+   260
+  ],
+  "icecream": [
+   340,
+   330
+  ],
+  "porta_potty": [
+   135,
+   240
+  ],
+  "speaker_pole": [
+   148,
+   300
+  ],
+  "crashed_ufo": [
+   429,
+   440
+  ],
+  "saguaro": [
+   141,
+   280
+  ],
+  "junk_pile": [
+   380,
+   400
+  ],
+  "gnome": [
+   74,
+   180
+  ],
+  "it_lanyard": [
+   133,
+   160
+  ],
+  "it_setpass": [
+   99,
+   160
+  ],
+  "it_remote": [
+   104,
+   160
+  ],
+  "it_dynamite": [
+   104,
+   160
+  ],
+  "it_pie": [
+   160,
+   139
+  ],
+  "it_coffee": [
+   123,
+   160
+  ],
+  "it_keys": [
+   158,
+   160
+  ],
+  "it_donut": [
+   160,
+   144
+  ],
+  "it_cowbell": [
+   139,
+   160
+  ],
+  "it_tape_hoa": [
+   160,
+   149
+  ],
+  "it_tape_sermon": [
+   160,
+   117
+  ],
+  "it_tape_metal": [
+   160,
+   156
+  ],
+  "it_tape_cow": [
+   158,
+   160
+  ],
+  "it_tape_kevin": [
+   160,
+   124
+  ],
+  "it_keycard": [
+   142,
+   160
+  ],
+  "it_megaphone": [
+   160,
+   156
+  ],
+  "it_finebook": [
+   144,
+   160
+  ],
+  "it_coupons": [
+   146,
+   160
+  ],
+  "it_fuse": [
+   160,
+   139
+  ],
+  "it_cables": [
+   160,
+   156
+  ],
+  "it_slime": [
+   96,
+   160
+  ],
+  "it_beans": [
+   104,
+   160
+  ],
+  "it_tinfoil": [
+   160,
+   147
+  ],
+  "it_photo": [
+   135,
+   160
+  ],
+  "it_gnome": [
+   66,
+   160
+  ],
+  "it_trophy": [
+   67,
+   160
   ]
  },
  "ui": {
@@ -322,9 +570,115 @@
    103,
    128
   ],
+  "em_hoa": [
+   157,
+   160
+  ],
+  "em_church": [
+   157,
+   160
+  ],
+  "em_rats": [
+   157,
+   160
+  ],
+  "em_network": [
+   158,
+   160
+  ],
+  "btn_bag": [
+   157,
+   160
+  ],
+  "btn_journal": [
+   158,
+   160
+  ],
+  "btn_look": [
+   156,
+   160
+  ],
+  "btn_use": [
+   157,
+   160
+  ],
+  "btn_map": [
+   156,
+   160
+  ],
+  "btn_enter": [
+   176,
+   180
+  ],
+  "icon_coupon": [
+   128,
+   109
+  ],
+  "icon_camera": [
+   100,
+   128
+  ],
   "splash": [
    752,
    1344
+  ]
+ },
+ "scenes": {
+  "bunker": [
+   1280,
+   1280
+  ],
+  "diner": [
+   1280,
+   1280
+  ],
+  "church": [
+   1280,
+   1280
+  ],
+  "clubhouse": [
+   1280,
+   1280
+  ],
+  "saloon": [
+   1280,
+   1280
+  ],
+  "office": [
+   1280,
+   1280
+  ],
+  "sheriff": [
+   1280,
+   1280
+  ],
+  "control": [
+   1280,
+   1280
+  ],
+  "sheriff_bars": [
+   422,
+   819
+  ],
+  "end_kevin": [
+   1280,
+   1280
+  ],
+  "end_hoa": [
+   1280,
+   1280
+  ],
+  "end_church": [
+   1280,
+   1280
+  ],
+  "end_metal": [
+   1280,
+   1280
+  ],
+  "end_cow": [
+   1280,
+   1280
   ]
  }
 }

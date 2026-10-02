@@ -3,6 +3,8 @@ import { clamp, fmtTime } from './util.js';
 import { THREAT, MISSIONS, rank } from './lines.js';
 import { ACTION_LABEL, ACTION_ICON } from './interact.js';
 import { fmtNum } from './vehicles.js';
+import { AdvUI } from './sceneui.js';
+import { SCENES, ENDING_IDS, ITEMS } from './story.js';
 
 export const STORY = [
   { video: 'couch', lines: ['1957. EARTH STARTS BROADCASTING TELEVISION INTO SPACE.', 'SEVENTY YEARS LATER, SOMEBODY OUT THERE FINALLY BINGED ALL OF IT.'] },
@@ -32,6 +34,12 @@ export class Input {
     window.addEventListener('pointercancel', (e) => this.up(e), opts);
     window.addEventListener('keydown', (e) => {
       this.keys.add(e.code);
+      if (e.code === 'KeyI' || e.code === 'KeyB') this.ui.onBagKey();
+      if (e.code === 'KeyJ' || e.code === 'KeyM') this.ui.onJournalKey(e.code === 'KeyM' ? 'map' : 'tasks');
+      if (e.code === 'Escape' && this.ui.closeOverlay()) {
+        e.preventDefault();
+        return;
+      }
       if (e.code === 'Space' || e.code === 'KeyH') this.honk = true;
       if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'KeyQ') this.boost = true;
       if (e.code === 'KeyE' || e.code === 'KeyF') this.action = true;
@@ -56,13 +64,14 @@ export class Input {
     const x = e.clientX, y = e.clientY;
     if (this.ui.press(x, y, e.pointerId)) return;
     if (this.ui.state !== 'play') return;
-    // the floating joystick works anywhere that is not a button
-    if (!this.joy) this.joy = { id: e.pointerId, ox: x, oy: y, x, y };
+    // the floating joystick works anywhere that is not a button; a short tap is a click on the world
+    if (!this.joy) this.joy = { id: e.pointerId, ox: x, oy: y, x, y, t0: performance.now(), maxD: 0 };
   }
   move(e) {
     if (this.joy && e.pointerId === this.joy.id) {
       this.joy.x = e.clientX;
       this.joy.y = e.clientY;
+      this.joy.maxD = Math.max(this.joy.maxD, Math.hypot(this.joy.x - this.joy.ox, this.joy.y - this.joy.oy));
       // drag the base along when the thumb wanders too far
       const R = this.ui.joyR();
       const dx = this.joy.x - this.joy.ox, dy = this.joy.y - this.joy.oy, d = Math.hypot(dx, dy);
@@ -78,7 +87,11 @@ export class Input {
     this.ui.hover(e.clientX, e.clientY, e.pointerId);
   }
   up(e) {
-    if (this.joy && e.pointerId === this.joy.id) this.joy = null;
+    if (this.joy && e.pointerId === this.joy.id) {
+      const j = this.joy;
+      this.joy = null;
+      if (j.maxD < 14 && performance.now() - j.t0 < 350) this.ui.tap(j.ox, j.oy);
+    }
     if (this.aimP && e.pointerId === this.aimP.id) this.aimP = null;
     this.ui.release(e.clientX, e.clientY, e.pointerId);
   }
@@ -139,6 +152,45 @@ export class UI {
     this.video.muted = false;
     this.video.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
     document.body.appendChild(this.video);
+    this.adv = new AdvUI(this);
+  }
+
+  // --- adventure overlays ------------------------------------------------------------------------------
+  onBagKey() {
+    const g = this.cb.game();
+    if (this.state !== 'play' || g.dialog || g.endingId || g.mode !== 'story') return;
+    if (g.scene) return;
+    this.adv.bagOpen = !this.adv.bagOpen;
+  }
+  onJournalKey(tab) {
+    const g = this.cb.game();
+    if (this.state !== 'play' || g.dialog || g.endingId) return;
+    this.adv.journal = this.adv.journal ? null : tab;
+  }
+  closeOverlay() {
+    const g = this.cb.game();
+    if (this.state !== 'play') return false;
+    if (this.adv.journal) return !(this.adv.journal = null);
+    if (this.adv.bagOpen) return !(this.adv.bagOpen = false);
+    if (g.keypadOn) return !(g.keypadOn = false);
+    if (g.dialog) return false;
+    if (g.scene) {
+      g.exitScene();
+      return true;
+    }
+    return false;
+  }
+  overlayOpen() {
+    const g = this.cb.game();
+    return !!(this.adv.journal || this.adv.bagOpen || g.scene || g.dialog || g.endingId || g.keypadOn);
+  }
+  // a short tap on the world (not on a button)
+  tap(x, y) {
+    const g = this.cb.game(), r = this.cb.renderer();
+    if (this.state !== 'play' || this.overlayOpen()) return;
+    const hit = r.pick(g, x, y);
+    const [wx, wy] = r.unproject(x, y);
+    g.tapWorld(hit, wx, wy);
   }
 
   resize(W, H, dpr) {
@@ -175,6 +227,7 @@ export class UI {
       return true;
     }
     if (this.state === 'title' || this.state === 'over') return true;
+    if (this.state === 'play' && this.overlayOpen()) return true;
     return false;
   }
   hover() {}
@@ -189,11 +242,12 @@ export class UI {
     }
   }
   onPauseKey() {
+    if (this.state === 'play' && this.overlayOpen()) return;
     if (this.state === 'play') this.cb.pause();
     else if (this.state === 'pause') this.cb.resume();
   }
   onEnter() {
-    if (this.state === 'title') this.cb.play();
+    if (this.state === 'title') this.cb.play(this.cb.hasSave() ? 'continue' : 'story');
     else if (this.state === 'over' && this.cb.game().overT > 1.5) this.cb.restart();
     else if (this.state === 'intro') this.endIntro();
   }
@@ -273,8 +327,31 @@ export class UI {
     ctx.globalCompositeOperation = 'source-over';
     if (this.state === 'title') return this.drawTitle(dt);
     if (this.state === 'intro') return this.drawIntro(dt);
+    if (g.endingId) return this.adv.drawEnding(g, dt);
+    if (g.scene && (this.state === 'play' || this.state === 'pause')) {
+      this.adv.drawScene(g, renderer, dt);
+      this.adv.drawToasts(g, this.safe.t + 60 * this.u);
+      if (this.adv.journal) this.adv.drawJournal(g, renderer);
+      if (g.banner) this.drawBanner(g.banner);
+      if (this.state === 'pause') this.drawPause(g);
+      return;
+    }
     this.drawFloaters(g, renderer);
-    if (this.state === 'play' || this.state === 'pause') this.drawHud(g, renderer);
+    if (this.state === 'play' || this.state === 'pause') {
+      this.drawHud(g, renderer);
+      if (g.mode === 'story') {
+        this.adv.drawWorldCaption(g);
+        if (g.dialog) {
+          const u = this.u, w = Math.min(this.W - 20 * u, 520 * u), h = Math.min(this.H * 0.5, 330 * u);
+          this.ctx.fillStyle = 'rgba(6,10,30,0.35)';
+          this.ctx.fillRect(0, 0, this.W, this.H);
+          this.btn('dlgbg', 0, 0, this.W, this.H, () => {});
+          this.adv.drawDialog(g, (this.W - w) / 2, this.H - this.safe.b - h - 14 * u, w, h);
+        }
+        if (this.adv.bagOpen) this.adv.drawBag(g);
+        if (this.adv.journal) this.adv.drawJournal(g, renderer);
+      }
+    }
     if (this.state === 'pause') this.drawPause(g);
     if (this.state === 'over') this.drawOver(g);
   }
@@ -299,15 +376,28 @@ export class UI {
     const hs = 34 * u * beat;
     this.img('icon_heart', left + 17 * u - hs / 2, top + 16 * u - hs / 2, hs);
     const ps = 40 * u;
+    const story = g.mode === 'story';
     const ks = String(g.rescued);
     const kw = this.font.measure(ks, 18 * u);
-    const resX = right - ps - 12 * u - kw - 26 * u;
+    const resX = story ? right - ps * 3 - 16 * u : right - ps - 12 * u - kw - 26 * u;
     const barW = Math.min(130 * u, resX - left - 52 * u);
     this.bar(left + 40 * u, top + 9 * u, barW, 14 * u, p.hp / p.maxHp, '#b3121b', '#ff5b4a');
     const pdown = this.btn('pause', right - ps, top, ps, ps, () => this.cb.pause(), true);
     this.img('btn_pause', right - ps * (pdown ? 0.95 : 1), top, ps * (pdown ? 0.9 : 1));
-    this.text(ks, right - ps - 8 * u - kw, top + 10 * u, 18 * u);
-    this.img('icon_seat', resX, top + 3 * u, 23 * u);
+    if (story) {
+      // the notebook (tasks, gangs, map) and the bag
+      this.btn('journal', right - ps * 2 - 6 * u, top, ps, ps, () => (this.adv.journal = 'tasks'), true);
+      this.img('btn_journal', right - ps * 2 - 6 * u, top, ps);
+      this.btn('bag', right - ps * 3 - 12 * u, top, ps, ps, () => (this.adv.bagOpen = true), true);
+      this.img('btn_bag', right - ps * 3 - 12 * u, top, ps);
+      if (g.inv.length) {
+        this.roundRect(right - ps * 2 - 22 * u, top + ps - 16 * u, 20 * u, 18 * u, 9 * u, '#c4231b', '#0d1a44', 1.5 * u);
+        this.text(String(g.inv.length), right - ps * 2 - 12 * u, top + ps - 13 * u, 11 * u, 0.5);
+      }
+    } else {
+      this.text(ks, right - ps - 8 * u - kw, top + 10 * u, 18 * u);
+      this.img('icon_seat', resX, top + 3 * u, 23 * u);
+    }
     // row 2: car / fuel (left), clock + threat (centre), damage (right)
     const ay = top + 42 * u;
     const c = p.car;
@@ -334,19 +424,93 @@ export class UI {
     const th = THREAT[g.level].name;
     const thSize = this.fitSize(th, 10 * u, this.W * 0.36);
     this.text(th, cx + 6 * u, ay + 30 * u, thSize, 0.5, 0.85);
-    const dmg = fmtNum(g.damage);
-    this.text('DAMAGE', right, ay + 2 * u, 9 * u, 1, 0.75);
-    this.text(dmg, right, ay + 15 * u, this.fitSize(dmg, 14 * u, this.W * 0.26), 1);
+    if (story) {
+      // coupons (the currency of the apocalypse)
+      const cs = String(g.coupons);
+      const cw = this.font.measure(cs, 16 * u);
+      this.img('icon_coupon', right - cw - 30 * u, ay - 2 * u, 26 * u);
+      this.text(cs, right, ay + 3 * u, 16 * u, 1);
+      // ratings: the Network is always watching
+      const rx = cx - 62 * u, ry = ay + 46 * u;
+      this.img('icon_camera', rx - 26 * u, ry - 9 * u, 22 * u);
+      const rk = g.ratings / 100;
+      this.bar(rx, ry - 2 * u, 124 * u, 7 * u, rk, rk < 0.2 ? '#b3121b' : '#a3218f', rk < 0.2 ? '#ff5b4a' : '#ff6ff0');
+      if (g.rateFlash > 0) this.text('+', rx + 124 * u * rk, ry - 16 * u, 12 * u, 0.5, g.rateFlash);
+      if (g.onAir) {
+        this.ctx.fillStyle = Math.floor(this.t * 2) % 2 ? '#ff2b2b' : '#7a1010';
+        this.ctx.beginPath();
+        this.ctx.arc(rx + 136 * u, ry + 1.5 * u, 4 * u, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.text('ON AIR', rx + 144 * u, ry - 3 * u, 8.5 * u, 0, 0.9);
+      }
+    } else {
+      const dmg = fmtNum(g.damage);
+      this.text('DAMAGE', right, ay + 2 * u, 9 * u, 1, 0.75);
+      this.text(dmg, right, ay + 15 * u, this.fitSize(dmg, 14 * u, this.W * 0.26), 1);
+    }
+    // story: the current objective
+    let tickY = top + (p.car ? 104 : 90) * u;
+    if (story && !g.dialog) {
+      const o = g.objective();
+      const oy = ay + (p.car ? 62 : 58) * u;
+      const ot = '* ' + o.text;
+      const os = this.fitSize(ot, 10 * u, this.W - 30 * u);
+      const ol = this.font.wrap(ot, os, this.W - 30 * u).slice(0, 2);
+      ol.forEach((ln, i) => this.text(ln, cx, oy + i * os * 1.25, os, 0.5, 0.85));
+      tickY = oy + ol.length * os * 1.25 + 8 * u;
+      const tg = o.target && g.landmarkPos(o.target);
+      if (tg && !g.scene) this.marker(r, tg, '#f2c23b', top);
+      // door markers over enterable buildings nearby
+      for (const d of g.world.doors) {
+        const dd = Math.hypot(d.x - p.x, d.y - p.y);
+        if (dd > 700) continue;
+        const [dx, dy] = r.project(d.prop.x, d.prop.y, 0);
+        const gm = r.propGeom(d.prop);
+        const hy = dy - gm.h * gm.ay * r.zoom - 18 * u + Math.sin(this.t * 3 + d.x) * 4 * u;
+        if (dx < -40 || dx > this.W + 40 || hy < -40 || hy > this.H) continue;
+        const a = clamp((700 - dd) / 250, 0, 1) * (dd < 120 ? 1 : 0.85);
+        this.img('btn_enter', dx - 15 * u, hy - 30 * u, 30 * u, 30 * u, a);
+        const nm = SCENES[d.scene].name;
+        this.text(nm, dx, hy + 2 * u, this.fitSize(nm, 9.5 * u, 200 * u), 0.5, a);
+      }
+      // waypoint from the map
+      const wp = this.adv.waypoint;
+      if (wp) {
+        if (Math.hypot(wp.x - p.x, wp.y - p.y) < 220) this.adv.waypoint = null;
+        else this.marker(r, wp, '#5dff8a', top);
+      }
+    }
     // ticker
-    const tickY = top + (p.car ? 104 : 90) * u;
     this.drawTicker(g, tickY);
+    if (story) {
+      this.adv.drawToasts(g, tickY + (g.tickerCur ? 54 * u : 0));
+      // holding an item: show it, with a cancel button
+      if (g.held && !this.adv.bagOpen) {
+        const it = ITEMS[g.held];
+        const lbl = 'USING: ' + it.name + '  (TAP A TARGET)';
+        const ls = this.fitSize(lbl, 11 * u, this.W * 0.7);
+        const lw = this.font.measure(lbl, ls) + 70 * u;
+        const lx = (this.W - lw) / 2, ly = this.H - this.safe.b - 132 * u;
+        this.roundRect(lx, ly, lw, 34 * u, 17 * u, 'rgba(11,20,51,0.92)', '#f2c23b', 2 * u);
+        this.img(it.icon, lx + 6 * u, ly + 3 * u, 28 * u, 28 * u);
+        this.text(lbl, lx + 40 * u, ly + 11 * u, ls, 0);
+        this.btn('heldx', lx + lw - 30 * u, ly, 30 * u, 34 * u, () => (g.held = null), true);
+        this.text('X', lx + lw - 16 * u, ly + 9 * u, 14 * u, 0.5);
+      }
+    }
     // mothership health
     let by = tickY + (g.tickerCur ? 52 * u : 0);
     if (g.mother && g.mother.state === 'fight') {
-      const lt = 'MEETING WITH THE NETWORK EXECUTIVE: ' + fmtTime(g.mother.leaveT);
-      this.text(lt, cx, by, this.fitSize(lt, 11 * u, this.W * 0.9), 0.5);
-      this.bar(cx - 100 * u, by + 15 * u, 200 * u, 9 * u, g.mother.leaveT / 60, '#6d0f8c', '#e45cff');
-      by += 34 * u;
+      if (g.mother.hunt) {
+        const lt = 'THE EXECUTIVE IS HUNTING YOU. GET THE POWER CELL TO THE TOWER.';
+        this.text(lt, cx, by, this.fitSize(lt, 11 * u, this.W * 0.9), 0.5, 0.7 + 0.3 * Math.sin(this.t * 6));
+        by += 22 * u;
+      } else {
+        const lt = 'MEETING WITH THE NETWORK EXECUTIVE: ' + fmtTime(g.mother.leaveT);
+        this.text(lt, cx, by, this.fitSize(lt, 11 * u, this.W * 0.9), 0.5);
+        this.bar(cx - 100 * u, by + 15 * u, 200 * u, 9 * u, g.mother.leaveT / 60, '#6d0f8c', '#e45cff');
+        by += 34 * u;
+      }
     }
     // current dispatcher mission
     if (g.mission) {
@@ -564,6 +728,25 @@ export class UI {
     ctx.fillStyle = `rgba(6,10,30,${0.6 * k})`;
     ctx.fillRect(0, 0, this.W, this.H);
     if (k <= 0) return;
+    if (g.mode === 'story') {
+      // in the story Dale does not die. He gets recast.
+      const w = Math.min(this.W * 0.9, 360 * u), cx = this.W / 2;
+      ctx.globalAlpha = k;
+      const h = this.panel(cx, this.H / 2, w);
+      const top = this.H / 2 - h / 2;
+      this.text('CUT!', cx, top + h * 0.1, 36 * u, 0.5, k);
+      const lines = this.font.wrap(g.deathLine + ' THE NETWORK IS RECASTING THE ROLE OF DALE. THE NEW DALE WILL LOOK EXACTLY THE SAME. NOBODY WILL NOTICE.', 11.5 * u, w * 0.78);
+      lines.forEach((ln, i) => this.text(ln, cx, top + h * 0.3 + i * 16 * u, 11.5 * u, 0.5, k));
+      if (g.overT > 1.5) {
+        this.wideButton('recast', 'RECAST DALE', cx, top + h * 0.74, w * 0.66, () => {
+          g.recast();
+          this.state = 'play';
+        });
+        this.wideButton('menu', 'MENU', cx, top + h * 0.9, w * 0.46, () => this.cb.menu());
+      }
+      ctx.globalAlpha = 1;
+      return;
+    }
     ctx.globalAlpha = k;
     const w = Math.min(this.W * 0.9, 360 * u);
     const h = this.panel(this.W / 2, this.H / 2 + (1 - k) * 40, w);
@@ -612,22 +795,34 @@ export class UI {
     gr.addColorStop(1, 'rgba(8,12,40,0.85)');
     ctx.fillStyle = gr;
     ctx.fillRect(0, H * 0.55, W, H * 0.45);
-    const lw = Math.min(W * 0.92, 560 * u);
+    const logo = this.A.img.logo;
+    const lw = Math.min(W * 0.92, 560 * u, (H * 0.3 * logo.width) / logo.height);
     const bob = Math.sin(this.t * 1.5) * 4 * u;
     const lh = this.img('logo', W / 2 - lw / 2, this.safe.t + H * 0.05 + bob, lw);
     const sub = 'EARTH HAS BEEN CANCELLED.';
     this.text(sub, W / 2, this.safe.t + H * 0.05 + lh + 6 * u, this.fitSize(sub, 17 * u, W * 0.86), 0.5);
-    const bw = Math.min(W * 0.72, 300 * u);
-    const by = H * 0.68;
-    this.wideButton('play', 'PLAY', W / 2, by, bw, () => this.cb.play());
-    this.wideButton('intro', 'WATCH INTRO', W / 2 - bw * 0.27, by + bw * 0.43, bw * 0.5, () => this.startIntro(false));
-    this.wideButton('sound', this.cb.soundOn() ? 'SOUND ON' : 'SOUND OFF', W / 2 + bw * 0.27, by + bw * 0.43, bw * 0.5, () => this.cb.toggleSound());
-    const best = this.cb.best();
-    if (best > 0) {
-      const t = 'BEST: ' + fmtTime(best) + '   ' + rank(best);
-      this.text(t, W / 2, H - this.safe.b - 52 * u, this.fitSize(t, 13 * u, W * 0.9), 0.5);
+    const bw = Math.min(W * 0.72, 300 * u, H * 0.46);
+    const bh = bw * 0.36;
+    let by = Math.max(H * 0.56, this.safe.t + H * 0.05 + lh + 34 * u + bh * 0.5);
+    const save = this.cb.hasSave();
+    if (save) {
+      this.wideButton('continue', 'CONTINUE STORY', W / 2, by, bw, () => this.cb.play('continue'));
+      by += bh;
+      this.wideButton('play', 'NEW STORY', W / 2 - bw * 0.26, by, bw * 0.5, () => this.cb.play('story'));
+      this.wideButton('endless', 'ENDLESS', W / 2 + bw * 0.26, by, bw * 0.5, () => this.cb.play('endless'));
+    } else {
+      this.wideButton('play', 'STORY MODE', W / 2, by, bw, () => this.cb.play('story'));
+      by += bh;
+      this.wideButton('endless', 'ENDLESS SURVIVAL', W / 2, by, bw * 0.8, () => this.cb.play('endless'));
     }
-    const tip = this.cb.touch() ? 'THUMB STEERS. GET IN A CAR. HONK A LOT. SAVE PEOPLE. BREAK THINGS.' : 'WASD DRIVES. E GETS IN AND OUT. SPACE HONKS. SHIFT IS NITRO.';
+    by += bh * 0.95;
+    this.wideButton('intro', 'WATCH INTRO', W / 2 - bw * 0.26, by, bw * 0.5, () => this.startIntro(false));
+    this.wideButton('sound', this.cb.soundOn() ? 'SOUND ON' : 'SOUND OFF', W / 2 + bw * 0.26, by, bw * 0.5, () => this.cb.toggleSound());
+    const best = this.cb.best();
+    const found = this.cb.endings();
+    const bt = (found ? 'ENDINGS FOUND: ' + found + '/' + ENDING_IDS.length + '   ' : '') + (best > 0 ? 'ENDLESS BEST: ' + fmtTime(best) : '');
+    if (bt) this.text(bt, W / 2, H - this.safe.b - 52 * u, this.fitSize(bt, 12 * u, W * 0.9), 0.5);
+    const tip = this.cb.touch() ? 'TAP TO WALK AND LOOK. DRAG TO DRIVE. TALK TO EVERYONE. BREAK THINGS.' : 'CLICK TO WALK AND LOOK. WASD DRIVES. E: ACTION. SPACE: HONK. I: BAG. J: TASKS.';
     this.text(tip, W / 2, H - this.safe.b - 26 * u, this.fitSize(tip, 10 * u, W * 0.92), 0.5, 0.8);
   }
 

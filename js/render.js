@@ -5,7 +5,8 @@ import { PICKUP_SPRITE } from './game.js';
 import { carSprite } from './vehicles.js';
 
 // figure sizes (screen units at zoom 1) - small, like real model-railway people
-const SIZE = { player: 50, civ: 44, cow: 58, pickup: 34, core: 22, dog: 34 };
+const SIZE = { player: 50, civ: 44, cow: 58, pickup: 34, core: 22, dog: 34, npc: 46, drone: 40 };
+const NPC_SPRITE = { hoa: 'npc_hoa', biker: 'npc_biker', cultist: 'npc_cultist', warden: 'npc_warden' };
 
 const TEX_SCALE = { sand: 0.375, dirt: 0.375, grass: 0.22, concrete: 0.25, asphalt: 0.3 };
 const TEX_OF = ['sand', 'dirt', 'grass', 'concrete', 'asphalt'];
@@ -86,6 +87,7 @@ export class Renderer {
   // --- frame -----------------------------------------------------------------------
   render(g, dt) {
     this.time += dt;
+    this.dtLast = dt;
     // adaptive quality: if frames stay slow for a while, trade resolution / post effects for speed
     if (dt > 0) {
       this.slow = dt > 1 / 38 ? (this.slow || 0) + dt : Math.max(0, (this.slow || 0) - dt * 0.5);
@@ -229,6 +231,52 @@ export class Renderer {
       g.fill(patch);
       g.globalAlpha = 1;
     }
+    // the HOA pool, crop circles and oil stains
+    for (const q of w.pools || []) {
+      if (q.x1 < x0 || q.x0 > x0 + S || q.y1 < y0 || q.y0 > y0 + S) continue;
+      g.fillStyle = '#f2efe6';
+      g.fillRect(q.x0 - 10, q.y0 - 10, q.x1 - q.x0 + 20, q.y1 - q.y0 + 20);
+      const gr = g.createLinearGradient(q.x0, q.y0, q.x1, q.y1);
+      gr.addColorStop(0, '#5fd3e8');
+      gr.addColorStop(1, '#1f8fc0');
+      g.fillStyle = gr;
+      g.fillRect(q.x0, q.y0, q.x1 - q.x0, q.y1 - q.y0);
+      g.strokeStyle = 'rgba(255,255,255,0.35)';
+      g.lineWidth = 3;
+      for (let k = 0; k < 6; k++) {
+        g.beginPath();
+        const yy = q.y0 + 14 + k * 18;
+        g.moveTo(q.x0 + 10, yy);
+        g.bezierCurveTo(q.x0 + 60, yy - 6, q.x0 + 120, yy + 6, q.x1 - 10, yy);
+        g.stroke();
+      }
+    }
+    for (const q of w.circles || []) {
+      if (q.x + q.r * 1.6 < x0 || q.x - q.r * 1.6 > x0 + S || q.y + q.r * 1.6 < y0 || q.y - q.r * 1.6 > y0 + S) continue;
+      g.strokeStyle = 'rgba(90,60,30,0.38)';
+      g.lineWidth = 10;
+      for (const k of [1, 0.66, 0.33]) {
+        g.beginPath();
+        g.arc(q.x, q.y, q.r * k, 0, Math.PI * 2);
+        g.stroke();
+      }
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * Math.PI * 2;
+        g.beginPath();
+        g.arc(q.x + Math.cos(a) * q.r * 1.35, q.y + Math.sin(a) * q.r * 1.35, q.r * 0.18, 0, Math.PI * 2);
+        g.stroke();
+      }
+    }
+    for (const q of w.stains || []) {
+      if (q.x + q.r < x0 || q.x - q.r > x0 + S || q.y + q.r < y0 || q.y - q.r > y0 + S) continue;
+      const gr = g.createRadialGradient(q.x, q.y, 0, q.x, q.y, q.r);
+      gr.addColorStop(0, 'rgba(20,16,12,0.55)');
+      gr.addColorStop(1, 'rgba(20,16,12,0)');
+      g.fillStyle = gr;
+      g.beginPath();
+      g.arc(q.x, q.y, q.r, 0, Math.PI * 2);
+      g.fill();
+    }
     g.fillStyle = 'rgba(236,196,72,0.9)';
     for (const q of w.dashes) {
       if (q.x1 < x0 || q.x0 > x0 + S || q.y1 < y0 || q.y0 > y0 + S) continue;
@@ -339,6 +387,27 @@ export class Renderer {
     if (g.mother) blob(g.mother.x, g.mother.y, 230, 0.5);
     for (const n of g.nests) if (n.land < 1) blob(n.x, n.y, 70 * n.land + 20, 0.5 * n.land);
     for (const v of g.vultures) blob(v.x + 60, v.y + 60, 26, 0.18);
+    for (const d of g.drones || []) blob(d.x, d.y, 16, 0.3);
+    for (const n of g.npcs || []) if (n.z > 2) blob(n.x, n.y, 12, 0.3);
+    // where Dale is walking to
+    const wk = g.player.walk;
+    if (wk && wk.path && !g.player.car) {
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = '#f2c23b';
+      for (let i = wk.i; i < wk.path.length; i++) {
+        const q = wk.path[i];
+        ctx.beginPath();
+        ctx.arc(q.x, q.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      const end = wk.path[wk.path.length - 1];
+      ctx.strokeStyle = '#f2c23b';
+      ctx.lineWidth = 4;
+      ctx.globalAlpha = 0.5 + 0.4 * Math.sin(this.time * 6);
+      ctx.beginPath();
+      ctx.arc(end.x, end.y, 22 + 4 * Math.sin(this.time * 6), 0, Math.PI * 2);
+      ctx.stroke();
+    }
     for (const t of g.tumbleweeds) blob(t.x, t.y, 18, 0.3);
     ctx.globalAlpha = 1;
     // UFO beams light up the ground
@@ -351,6 +420,7 @@ export class Renderer {
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
 
+    this.drawFences(g);
     // iso-perspective decals drawn in screen space
     this.screenTransform();
     for (const d of g.decals) {
@@ -376,6 +446,43 @@ export class Renderer {
     this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
   }
 
+  // The studio lot's force-field fence and the gate.
+  drawFences(g) {
+    const w = g.world, ctx = this.ctx, z = this.zoom;
+    if (!w.fences.length) return;
+    this.screenTransform();
+    ctx.globalCompositeOperation = 'lighter';
+    const H = 46;
+    const seg = (x0, y0, x1, y1, a) => {
+      const [ax, ay] = this.project(x0, y0), [bx, by] = this.project(x1, y1);
+      if (Math.max(ax, bx) < -50 || Math.min(ax, bx) > this.W + 50 || Math.max(ay, by) < -80 || Math.min(ay, by) > this.H + 50) return;
+      const gr = ctx.createLinearGradient(0, ay, 0, ay - H * z);
+      gr.addColorStop(0, `rgba(90,230,255,${0.32 * a})`);
+      gr.addColorStop(1, 'rgba(90,230,255,0)');
+      ctx.fillStyle = gr;
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.lineTo(bx, by - H * z);
+      ctx.lineTo(ax, ay - H * z);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = `rgba(150,245,255,${0.5 * a})`;
+      ctx.lineWidth = 1.5;
+      for (const h of [10, 24, 38]) {
+        const o = Math.sin(this.time * 4 + x0 * 0.01 + h) * 2;
+        ctx.beginPath();
+        ctx.moveTo(ax, ay - (h + o) * z);
+        ctx.lineTo(bx, by - (h - o) * z);
+        ctx.stroke();
+      }
+    };
+    const fl = 0.75 + 0.25 * Math.sin(this.time * 7);
+    for (const f of w.fences) seg(f.x0, f.y0, f.x1, f.y1, fl);
+    if (w.gateWall) seg(w.gate.x0, w.gate.y, w.gate.x1, w.gate.y, 1.5 + 0.5 * Math.sin(this.time * 12));
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
   // --- objects ---------------------------------------------------------------------------
   propGeom(p) {
     if (p.geom) return p.geom;
@@ -398,6 +505,7 @@ export class Renderer {
     objs.length = 0;
     const cull = (sx, sy, r) => sx > -r && sx < W + r && sy > -r * 0.5 && sy < H + r * 1.6;
     const addProp = (q) => {
+      if (q.def.invisible) return;
       const [sx, sy] = this.project(q.x, q.y);
       if (!cull(sx, sy, 340 * z)) return;
       objs.push({ d: q.depth, k: 0, o: q, sx, sy });
@@ -419,8 +527,10 @@ export class Renderer {
     for (const c of g.cars) add(10, c);
     for (const d of g.debris) add(11, d);
     if (g.dog) add(12, g.dog);
+    for (const n of g.npcs || []) add(13, n);
     if (!g.player.car && !g.player.dead) add(9, g.player);
-    this.interactTarget = g.interact && g.interact.kind !== 'exit' && g.interact.kind !== 'bail' ? g.interact.o : null;
+    this.interactTarget = g.interact && g.interact.kind !== 'exit' && g.interact.kind !== 'bail' ? (g.interact.o.prop || g.interact.o) : null;
+    if (g.player.walk && g.player.walk.hit) this.interactTarget = g.player.walk.hit.o.prop || g.player.walk.hit.o;
     this.flash = null;
     objs.sort((a, b) => a.d - b.d);
 
@@ -458,6 +568,7 @@ export class Renderer {
         break;
       }
       case 12: key = 'dog'; [w, h] = this.sizeW('dog', SIZE.dog); ay = 0.9; flip = o.flip; break;
+      case 13: if (o.z > 2) return; key = NPC_SPRITE[o.kind]; [w, h] = this.sizeH(key, SIZE.npc); ay = 0.97; flip = o.flip; break;
       case 9: {
         const s = this.playerSprite(o);
         key = s.key; w = s.w; h = s.h; ay = 0.97; flip = s.flip;
@@ -573,8 +684,40 @@ export class Renderer {
         const def = o.def;
         let skew = 0;
         if (def.sway) skew = Math.sin(t * 1.4 + o.x * 0.013 + o.y * 0.007) * def.sway + Math.sin(t * 3.1 + o.x) * def.sway * 0.3;
+        let sy2 = 1;
+        if (o.poke > 0) {
+          // tapped: a little jiggle, Hidden Folks style
+          o.poke = Math.max(0, o.poke - (this.dtLast || 0.016) * 2.2);
+          skew += Math.sin(t * 40) * 0.06 * o.poke;
+          sy2 = 1 + Math.sin(t * 30) * 0.04 * o.poke;
+        }
         const hl = this.interactTarget === o ? 0.18 + 0.12 * Math.sin(t * 8) : 0;
-        this.sprite(o.sprite, it.sx, it.sy, gm.w, gm.h, 0.5, gm.ay, o.flip, 0, skew, 1, hl);
+        this.sprite(o.sprite, it.sx, it.sy, gm.w, gm.h, 0.5, gm.ay, o.flip, 0, skew, 1, hl, 1, sy2);
+        if (def.fire) {
+          const fl = 0.7 + Math.random() * 0.3;
+          this.glow('orange', it.sx, it.sy - gm.h * 0.9 * z, 40 * z, (0.5 + night * 0.5) * fl);
+          this.addLight(it.sx, it.sy - 20 * z, 150, 0.85 * fl);
+        }
+        if (o.type === 'tower') {
+          const pulse = 0.6 + 0.4 * Math.sin(t * 2.5);
+          const top = it.sy - gm.h * gm.ay * z + gm.h * 0.03 * z;
+          this.glow('magenta', it.sx, top, 70 * z, 0.5 + pulse * 0.4);
+          this.glow('violet', it.sx, top, 160 * z, 0.25 + night * 0.35);
+          this.addLight(it.sx, top, 260, 0.8);
+          if (Math.floor(t * 1.5) % 2) this.glow('red', it.sx - 8 * z, it.sy - gm.h * gm.ay * z * 0.55, 10 * z, 0.9);
+          this.addLight(it.sx, it.sy, 200, 0.5);
+        }
+        if (o.type === 'checkpoint' && !g.f('gateOpen')) this.glow('cyan', it.sx + 50 * z, it.sy - 40 * z, 60 * z, 0.3 + night * 0.3);
+        if (o.type === 'pylon') {
+          this.glow('cyan', it.sx, it.sy - gm.h * 0.95 * z, 14 * z, 0.7 + 0.3 * Math.sin(t * 5 + o.x));
+          if (night > 0.2) this.addLight(it.sx, it.sy - 30 * z, 60, 0.5);
+        }
+        if (o.type === 'speaker_pole' && Math.sin(t * 2 + o.x) > 0.6) this.glow('violet', it.sx, it.sy - gm.h * 0.8 * z, 18 * z, 0.6);
+        if (o.type === 'drive_in') {
+          this.glow('violet', it.sx - 30 * z, it.sy - gm.h * 0.62 * z, 90 * z, 0.25 + night * 0.4);
+          if (night > 0.1) this.addLight(it.sx - 20 * z, it.sy - 40 * z, 220, 0.7 * night);
+        }
+        if (o.scene && g.mode === 'story' && night > 0.2) this.addLight(it.sx, it.sy - 20 * z, 140, 0.6);
         // twinkles on things worth rummaging through / driving
         if (((o.search && !o.searched) || o.drivable) && !g.player.car && dist2(o.x, o.y, g.player.x, g.player.y) < 520 * 520) {
           const tw = 0.5 + 0.5 * Math.sin(t * 4 + o.x * 0.05);
@@ -752,6 +895,18 @@ export class Renderer {
         else this.sprite(o.sprite, it.sx, it.sy - o.z * z - gm.h * 0.4 * z, gm.w, gm.h, 0.5, 0.5, o.flip, o.rot, 0, a);
         break;
       }
+      case 13: {
+        const key = NPC_SPRITE[o.kind];
+        const [w, h] = this.sizeH(key, SIZE.npc);
+        const moving = Math.hypot(o.vx, o.vy) > 10 && o.state !== 'knocked';
+        const hop = moving ? Math.abs(Math.sin(o.walkT * 12)) * 3 * z : 0;
+        const hl = this.interactTarget === o ? 0.25 + 0.15 * Math.sin(t * 8) : 0;
+        const rot = o.state === 'knocked' ? o.rot : moving ? Math.sin(o.walkT * 12) * 0.09 : o.kind === 'cultist' ? Math.sin(t * 2 + o.x) * 0.06 : 0;
+        this.sprite(key, it.sx, it.sy - hop - o.z * z, w, h, 0.5, o.state === 'knocked' ? 0.6 : 0.97, o.flip, rot, 0, 1, hl);
+        if (o.kind === 'warden' && night > 0.2) this.addLight(it.sx, it.sy - 20 * z, 50, 0.4);
+        if (o.fined) this.glow('red', it.sx, it.sy - h * z - 4 * z, 6 * z, 0.6);
+        break;
+      }
       case 12: {
         const [w, h] = this.sizeW('dog', SIZE.dog);
         const moving = Math.hypot(o.vx, o.vy) > 10;
@@ -762,6 +917,84 @@ export class Renderer {
         break;
       }
     }
+  }
+
+  // --- picking: what is under the finger? ---------------------------------------------------------
+  maskOf(key) {
+    let m = this.masks && this.masks.get(key);
+    if (m !== undefined) return m;
+    if (!this.masks) this.masks = new Map();
+    const img = this.A.img[key];
+    if (!img) return null;
+    const S = 48;
+    const mw = img.width >= img.height ? S : Math.max(4, Math.round((S * img.width) / img.height));
+    const mh = img.height >= img.width ? S : Math.max(4, Math.round((S * img.height) / img.width));
+    const c = document.createElement('canvas');
+    c.width = mw;
+    c.height = mh;
+    const x = c.getContext('2d', { willReadFrequently: true });
+    x.drawImage(img, 0, 0, mw, mh);
+    const d = x.getImageData(0, 0, mw, mh).data;
+    const a = new Uint8Array(mw * mh);
+    for (let i = 0; i < mw * mh; i++) a[i] = d[i * 4 + 3] > 50 ? 1 : 0;
+    m = { a, w: mw, h: mh };
+    this.masks.set(key, m);
+    return m;
+  }
+  hitSprite(key, ax, ay, w, h, flip, px, py, slop = 1) {
+    // ax, ay = screen position of the sprite anchor (bottom centre-ish); w, h in screen pixels
+    const left = ax - w / 2, top = ay - h;
+    if (px < left - 6 || px > left + w + 6 || py < top - 6 || py > top + h + 6) return false;
+    const m = this.maskOf(key);
+    if (!m) return true;
+    let u = (px - left) / w, v = (py - top) / h;
+    if (flip) u = 1 - u;
+    const cx = Math.floor(u * m.w), cy = Math.floor(v * m.h);
+    for (let dy = -slop; dy <= slop; dy++)
+      for (let dx = -slop; dx <= slop; dx++) {
+        const x = cx + dx, y = cy + dy;
+        if (x >= 0 && y >= 0 && x < m.w && y < m.h && m.a[y * m.w + x]) return true;
+      }
+    return false;
+  }
+  pick(g, px, py) {
+    const z = this.zoom;
+    // flying things first
+    for (const d of g.drones || []) if (d.sx !== undefined && Math.hypot(px - d.sx, py - (d.sy - d.sh * 0.3)) < 30) return { k: 14, o: d };
+    for (const u of g.ufos) {
+      const [sx, sy] = this.project(u.x, u.y, u.z);
+      if (Math.hypot(px - sx, py - sy) < 70 * z) return { k: 15, o: u };
+    }
+    if (g.mother) {
+      const [sx, sy] = this.project(g.mother.x, g.mother.y, g.mother.z);
+      if (Math.hypot(px - sx, py - sy) < 160 * z) return { k: 16, o: g.mother };
+    }
+    // characters get a generous hit box, buildings need a pixel hit
+    let best = null;
+    for (let i = this.objs.length - 1; i >= 0; i--) {
+      const it = this.objs[i], o = it.o;
+      let hit = false;
+      switch (it.k) {
+        case 0: {
+          if (o.def.invisible) break;
+          const gm = this.propGeom(o);
+          hit = this.hitSprite(o.sprite, it.sx, it.sy + gm.h * (1 - gm.ay) * z, gm.w * z, gm.h * z, o.flip, px, py);
+          break;
+        }
+        case 1: case 2: case 3: case 9: case 12: case 13: case 10: case 4: case 5: {
+          const r = it.k === 10 ? 50 : it.k === 5 ? 80 : it.k === 3 ? 34 : 26;
+          const cy = it.sy - (it.k === 10 ? 20 : it.k === 5 ? 40 : 22) * z;
+          if (Math.hypot(px - it.sx, (py - cy) * 0.8) < r * z + 8) hit = true;
+          break;
+        }
+      }
+      if (hit) {
+        // prefer characters over the building behind them
+        if (it.k !== 0) return { k: it.k, o };
+        if (!best) best = { k: 0, o };
+      }
+    }
+    return best;
   }
 
   hpBar(sx, sy, w, k, color = '#e23b3b') {
@@ -909,6 +1142,26 @@ export class Renderer {
       this.glow('magenta', sx, sy - 14 * z, 90 * z, pulse);
       this.glow('violet', sx, sy + 20 * z, 220 * z, 0.3 + this.dark * 0.3, 0.45);
       this.addLight(sx, sy, 320, 0.7);
+    }
+    // camera drones: everything is content
+    for (const d of g.drones || []) {
+      const bob = Math.sin(this.time * 3 + d.i) * 5;
+      const [sx, sy] = this.project(d.x, d.y, d.z + bob);
+      if (sx < -80 || sx > this.W + 80 || sy < -80 || sy > this.H + 80) continue;
+      const [w, h] = this.sizeH('drone', SIZE.drone);
+      const flip = (d.vx - d.vy) > 0;
+      this.sprite('drone', sx, sy, w, h, 0.5, 0.6, flip, d.off > 0 ? 0.6 : Math.sin(this.time * 2 + d.i) * 0.08);
+      if (d.off <= 0) {
+        if (Math.floor(this.time * 2 + d.i) % 2) this.glow('red', sx + (flip ? 6 : -6) * z, sy - h * 0.45 * z, 8 * z, 0.95);
+        this.glow('cyan', sx, sy + h * 0.25 * z, 16 * z, 0.5);
+        if (d.flash > 0) {
+          this.glow('white', sx, sy - h * 0.3 * z, 60 * z * d.flash, d.flash);
+          this.addLight(sx, sy, 200, d.flash);
+        }
+      }
+      d.sx = sx;
+      d.sy = sy;
+      d.sh = h * z;
     }
     // vultures: they know something you don't
     for (const v of g.vultures) {

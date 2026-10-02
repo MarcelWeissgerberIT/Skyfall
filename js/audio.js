@@ -268,7 +268,84 @@ export class Sound {
         [392, 370, 349, 330].forEach((f, i) => this.osc('triangle', f, f * 0.97, 0.45, 0.2, i * 0.38));
         this.osc('sine', 82, 70, 2.2, 0.3, 1.1);
         break;
+      // --- adventure sounds ---
+      case 'cash':
+        if (!this.gate(name, 120)) return;
+        this.osc('square', 1318, 1318, 0.05, 0.1);
+        this.osc('square', 1760, 1760, 0.12, 0.1, 0.05);
+        break;
+      case 'jukebox':
+        [262, 330, 392, 523, 392, 330].forEach((f, i) => this.osc('triangle', f, f, 0.16, 0.16, i * 0.09));
+        break;
+      case 'mosh':
+        for (let i = 0; i < 6; i++) {
+          this.osc('sawtooth', 82, 80, 0.12, 0.22, i * 0.13);
+          this.noiseBurst(0.08, 0.3, 'lowpass', 300, 80, 1, i * 0.13);
+        }
+        break;
+      case 'organ':
+        [196, 247, 294, 392].forEach((f) => {
+          this.osc('square', f, f, 1.6, 0.05);
+          this.osc('sine', f * 2, f * 2, 1.6, 0.05);
+        });
+        break;
+      case 'theremin':
+        {
+          const o = this.osc('sine', 500, 900, 1.4, 0.18);
+          const l = this.ctx.createOscillator(), lg = this.ctx.createGain();
+          l.frequency.value = 6;
+          lg.gain.value = 25;
+          l.connect(lg).connect(o.frequency);
+          l.start();
+          l.stop(this.ctx.currentTime + 1.5);
+        }
+        break;
+      case 'ding':
+        this.osc('sine', 2093, 2093, 0.8, 0.2);
+        this.osc('sine', 4186, 4186, 0.4, 0.05);
+        break;
+      case 'cowbell':
+        for (let i = 0; i < 2; i++) {
+          this.osc('square', 562, 560, 0.3, 0.12, i * 0.18);
+          this.osc('square', 845, 840, 0.25, 0.08, i * 0.18);
+        }
+        break;
+      case 'megaphone':
+        this.noiseBurst(0.5, 0.3, 'bandpass', 1400, 1200, 4);
+        this.osc('sawtooth', 300, 260, 0.5, 0.12);
+        this.osc('square', 3000, 3000, 0.15, 0.04);
+        break;
+      case 'fine':
+        this.osc('square', 200, 200, 0.06, 0.2);
+        this.noiseBurst(0.08, 0.4, 'lowpass', 800, 200);
+        this.osc('triangle', 880, 660, 0.2, 0.12, 0.08);
+        break;
+      case 'engine':
+        this.osc('sawtooth', 60, 180, 0.5, 0.25);
+        this.osc('square', 30, 90, 0.5, 0.15);
+        break;
+      case 'zap':
+        if (!this.gate(name, 120)) return;
+        this.osc('sawtooth', 1800, 200, 0.2, 0.15);
+        this.noiseBurst(0.15, 0.25, 'highpass', 3000, 6000, 1);
+        break;
+      case 'camera':
+        this.noiseBurst(0.05, 0.4, 'highpass', 3000, 3000, 1);
+        this.osc('square', 1600, 1600, 0.03, 0.1, 0.06);
+        break;
+      case 'type':
+        if (!this.gate(name, 45)) return;
+        this.osc('square', 700 + Math.random() * 300, 600, 0.025, 0.035);
+        break;
+      case 'item':
+        [784, 988, 1175, 1568].forEach((f, i) => this.osc('triangle', f, f, 0.12, 0.14, i * 0.07));
+        break;
     }
+  }
+
+  // Interiors get their own little soundtracks.
+  setStyle(style) {
+    this.style = style || 'world';
   }
 
   // Engine drone that follows the speedometer.
@@ -374,6 +451,7 @@ export class Sound {
       this.nextT = c.currentTime + 0.1;
       return;
     }
+    if (this.style && this.style !== 'world') return this.tickStyle();
     const bpm = 84 + this.intensity * 46;
     const beat = 60 / bpm / 2;
     while (this.nextT < c.currentTime + 0.25) {
@@ -394,6 +472,76 @@ export class Sound {
       }
       this.nextT += beat;
     }
+  }
+
+  // simple procedural loops for the interiors
+  tickStyle() {
+    const c = this.ctx, st = this.style;
+    this.thereminGain.gain.setTargetAtTime(0, c.currentTime, 0.1);
+    const BPM = { jukebox: 132, organ: 56, metal: 160, muzak: 96, office: 112, western: 92, bunker: 70, tower: 64 };
+    const beat = 60 / (BPM[st] || 90) / 2;
+    while (this.nextT < c.currentTime + 0.25) {
+      const t = this.nextT, s = this.step++;
+      const bar = Math.floor(s / 8);
+      if (st === 'jukebox') {
+        // doo-wop: C Am F G
+        const ch = [[262, 330, 392], [220, 262, 330], [175, 220, 262], [196, 247, 294]][bar % 4];
+        this.note('triangle', ch[s % 3] * (s % 6 < 3 ? 1 : 2), t, beat * 0.9, 0.06);
+        if (s % 2 === 0) this.bass(t, ch[0] / 2, beat * 1.4);
+        if (s % 4 === 2) this.hat(t, 0.04);
+      } else if (st === 'organ') {
+        const ch = [[196, 247, 294], [175, 220, 262], [165, 208, 247], [196, 247, 294]][bar % 4];
+        if (s % 8 === 0) ch.forEach((f) => (this.note('square', f, t, beat * 7.5, 0.025), this.note('sine', f * 2, t, beat * 7.5, 0.03)));
+      } else if (st === 'metal') {
+        if (s % 16 < 12) this.note('sawtooth', s % 8 === 6 ? 98 : 82, t, beat * 0.5, 0.09);
+        if (s % 4 === 0) this.kick(t);
+        if (s % 2 === 1) this.hat(t, 0.06);
+      } else if (st === 'muzak') {
+        const ch = [[294, 349, 440, 523], [262, 330, 392, 494]][bar % 2];
+        if (s % 4 === 0) ch.forEach((f) => this.note('sine', f, t, beat * 3.5, 0.03));
+        if (s % 2 === 0) this.bass(t, ch[0] / 4, beat);
+      } else if (st === 'office') {
+        const sc = [0, 3, 7, 10, 12, 15];
+        this.note('square', 330 * Math.pow(2, sc[(s * 5) % sc.length] / 12), t, beat * 0.6, 0.025);
+        if (s % 4 === 0) this.bass(t, 82, beat * 2);
+      } else if (st === 'western') {
+        const sc = [196, 247, 294, 330, 294, 247, 220, 196];
+        if (s % 2 === 0) this.note('triangle', sc[(s / 2) % 8], t, beat * 1.6, 0.08);
+        if (s % 4 === 0) this.bass(t, 98, beat * 1.5);
+      } else if (st === 'bunker') {
+        if (s % 16 === 0) this.note('sine', 55, t, beat * 15, 0.1);
+        if (Math.random() < 0.08) this.note('square', 900 + Math.random() * 800, t, 0.05, 0.02);
+      } else if (st === 'tower') {
+        if (s % 16 === 0) (this.note('sawtooth', 41, t, beat * 15, 0.06), this.note('sine', 82, t, beat * 15, 0.08));
+        if (s % 4 === 0 && Math.random() < 0.7) this.note('sine', 220 * Math.pow(2, [0, 2, 4, 6, 8, 10][Math.floor(Math.random() * 6)] / 12) * 2, t, beat * 3, 0.04);
+      }
+      this.nextT += beat;
+    }
+  }
+
+  note(type, f, t, dur, vol) {
+    const c = this.ctx;
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = type;
+    o.frequency.value = f;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(this.mus);
+    o.start(t);
+    o.stop(t + dur + 0.05);
+  }
+
+  kick(t) {
+    const c = this.ctx;
+    const o = c.createOscillator(), g = c.createGain();
+    o.frequency.setValueAtTime(140, t);
+    o.frequency.exponentialRampToValueAtTime(40, t + 0.12);
+    g.gain.setValueAtTime(0.6, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+    o.connect(g).connect(this.mus);
+    o.start(t);
+    o.stop(t + 0.2);
   }
 
   bass(t, f, dur) {

@@ -159,9 +159,12 @@ export const VehicleMixin = {
         this.float('NO ROOM! I HAVE A STATION WAGON LIFESTYLE!', v.x, v.y, 11, 1.6);
       }
     }
-    // drop them off at the evac bus
-    const ev = this.world.evac;
-    if (ev && c.seats.length && dist2(c.x, c.y, ev.x, ev.y) < 190 * 190 && Math.abs(c.speed) < 220) this.unload(c);
+    // drop them off at the evac bus (or at the church, while Gloria collects lost souls)
+    if (c.seats.length && Math.abs(c.speed) < 220) {
+      const z = this.dropZone(c.x, c.y);
+      if (z) this.unload(c, z);
+    }
+    // the Rats' garage fixes cars for friends (see adventure.js)
     this.sound.engine(true, Math.abs(c.speed) / c.V.speed, c.boostT > 0);
   },
 
@@ -201,16 +204,20 @@ export const VehicleMixin = {
     if (this.dog) this.dog.bark = 0.6;
   },
 
-  unload(c) {
+  unload(c, zone) {
     const n = c.seats.length;
-    const ev = this.world.evac;
+    const ev = zone || this.world.evac;
+    const church = zone && zone.kind === 'church';
     for (const type of c.seats) {
-      // they run to the bus and get on
-      this.civs.push({ type, x: c.x + rand(-20, 20), y: c.y + rand(-20, 20), r: 10, vx: 0, vy: 0, t: 0, walkT: 0, panic: 1, flip: false, gave: true, life: 999, quipT: 9, fade: 1, taken: 'rescued', yell: 0 });
+      // they run to the bus (or into the church) and get on with their lives
+      this.civs.push({ type, x: c.x + rand(-20, 20), y: c.y + rand(-20, 20), r: 10, vx: 0, vy: 0, t: 0, walkT: 0, panic: 1, flip: false, gave: true, life: 999, quipT: 9, fade: 1, taken: 'rescued', yell: 0, dest: church ? { x: ev.x - 80, y: ev.y - 120 } : null });
     }
     c.seats.length = 0;
     this.rescued += n;
-    this.float('+' + n + ' RESCUED', c.x, c.y, 16, 1.8);
+    this.rate(3 * n);
+    if (this.mode === 'story') this.earn(2 * n);
+    if (church) this.converted(n);
+    this.float('+' + n + (church ? ' CONVERTED' : ' RESCUED'), c.x, c.y, 16, 1.8);
     this.say(pick(L.RESCUE), true);
     this.sound.play('rescue');
     const drops = 1 + Math.floor(n / 2);
@@ -315,6 +322,20 @@ export const VehicleMixin = {
 
   addDamage(x, y, value, name) {
     this.damage += value;
+    this.rate(Math.min(6, 0.4 + value / 4000));
+    // Barb wants carnage in the HOA's estates; the HOA notices
+    if (this.mode === 'story' && this.world.district(x, y) === 'estates') {
+      this.set('estateDamage', (this.f('estateDamage') || 0) + value);
+      this.hoaGrudge = (this.hoaGrudge || 0) + value;
+      while (this.hoaGrudge > 15000) {
+        this.hoaGrudge -= 15000;
+        this.rep('hoa', -3, true);
+      }
+      if (this.q('proveit') === 1 && this.f('estateDamage') >= 30000 && !this.f('proveMsg')) {
+        this.set('proveMsg');
+        this.toast('30K IN THE ESTATES. TELL BARB.', 'em_rats', '#7dff9a');
+      }
+    }
     if (name) this.float(name + ' ' + fmtNum(value), x, y, 11, 1.3);
     const steps = [10000, 50000, 100000, 250000, 1000000, 5000000];
     while (this.damageStep < steps.length && this.damage >= steps[this.damageStep]) {
@@ -627,6 +648,18 @@ export const VehicleMixin = {
           cw.x = c.x + (dx / d) * rr;
           cw.y = c.y + (dy / d) * rr;
           if (sp > 60) this.sound.play('moo');
+        }
+      }
+      // the gangs: they fly, they complain, they hold grudges
+      for (const n of this.npcs || []) {
+        if (n.state === 'knocked') continue;
+        const dx = n.x - c.x, dy = n.y - c.y, rr = c.r + n.r, d = Math.hypot(dx, dy);
+        if (d < rr && d > 0.01) {
+          if (sp > 110 && !c.wreck) this.knockNpc(n, c, sp);
+          else {
+            n.x = c.x + (dx / d) * rr;
+            n.y = c.y + (dy / d) * rr;
+          }
         }
       }
       const dog = this.dog;

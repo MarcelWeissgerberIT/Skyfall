@@ -1,12 +1,36 @@
 // Everything Dale can do with the context button: get into (or steal) cars, talk survivors into
 // following him, pet cows and the dog, rummage through houses, rig the gas station - and run
 // errands for a very sarcastic dispatcher.
-import { TILE, rand, pick, clamp, dist2, weighted } from './util.js';
+import { TILE, rand, randi as randInt, pick, clamp, dist2, weighted } from './util.js';
 import * as L from './lines.js';
 
-const SEARCH_TIME = { house: 1.4, store: 1.6, trailer: 1.2, car: 0.9, bin: 0.6 };
-export const ACTION_LABEL = { search: 'SEARCH', drive: 'DRIVE', carjack: 'CARJACK', talk: 'TALK', pet: 'PET', rig: 'RIG IT', exit: 'GET OUT', bail: 'BAIL OUT' };
-export const ACTION_ICON = { search: 'btn_search', drive: 'btn_drive', carjack: 'btn_drive', talk: 'btn_talk', pet: 'btn_pet', rig: 'btn_rig', exit: 'btn_exit', bail: 'btn_exit' };
+import { SCENES, BARKS, LOOK } from './story.js';
+
+const SEARCH_TIME = { house: 1.4, store: 1.6, trailer: 1.2, car: 0.9, bin: 0.6, potty: 1.0, junk: 1.3, ufo: 1.8, motel: 1.5 };
+export const ACTION_LABEL = { search: 'SEARCH', drive: 'DRIVE', carjack: 'CARJACK', talk: 'TALK', pet: 'PET', rig: 'RIG IT', exit: 'GET OUT', bail: 'BAIL OUT', enter: 'ENTER', guard: 'TALK', chat: 'TALK', use: 'USE' };
+export const ACTION_ICON = { search: 'btn_search', drive: 'btn_drive', carjack: 'btn_drive', talk: 'btn_talk', pet: 'btn_pet', rig: 'btn_rig', exit: 'btn_exit', bail: 'btn_exit', enter: 'btn_enter', guard: 'btn_talk', chat: 'btn_talk', use: 'btn_use' };
+
+// Things in town with their own little interaction when Dale walks up and taps them.
+const PROP_USE = {
+  phone_booth: [
+    'YOU PICK UP THE PHONE. A VOICE: THANK YOU FOR CALLING THE NETWORK. YOUR CALL IS IMPORTANT TO US. YOUR PLANET IS NOT.',
+    "YOU DIAL YOUR EX-WIFE. SHE PICKS UP, SAYS: TYPICAL, AND HANGS UP. THE ALIENS DIDN'T EVEN HAVE TO DO ANYTHING.",
+    'YOU DIAL 911. IT RINGS IN SPACE.',
+    'A RECORDED MESSAGE: PRESS 1 TO BE ABDUCTED. PRESS 2 TO BE ABDUCTED IN SPANISH.',
+  ],
+  icecream: ['YOU HONK THE ICE CREAM TRUCK HORN. IT PLAYS THE SONG. SOMEWHERE A CHILD SCREAMS WITH JOY. OR TERROR.', 'THE FREEZER IS FULL OF POPSICLES SHAPED LIKE ALIENS. THEY ARE ALL BITTEN. FROM THE INSIDE.'],
+  speaker_pole: ['THE LOUDSPEAKER CRACKLES: CITIZENS, PLEASE REMAIN CALM AND ATTRACTIVE. THE FINALE IS COMING.', 'THE LOUDSPEAKER: REMINDER - SCREAMING IS ONLY PERMITTED IN YOUR KEY LIGHT.', 'THE LOUDSPEAKER PLAYS ELEVATOR MUSIC. THE ALIEN KIND. IT IS SIX HOURS OF ONE NOTE.'],
+  burn_barrel: ['YOU WARM YOUR HANDS AT THE BARREL. A BIKER NODS AT YOU. THIS IS FRIENDSHIP NOW.'],
+  billboard_a: ['SOMEONE SPRAYED UNDER THE BILLBOARD: THE COW KNOWS.'],
+  billboard_b: ['UNDER THE BILLBOARD: A TINY TINFOIL SHRINE. KEVIN WAS HERE.'],
+  water_tower: ['YOU KNOCK ON A LEG OF THE WATER TOWER. SOMETHING INSIDE KNOCKS BACK.'],
+  pylon: ['BZZZT. YOUR HAIR STANDS UP. YOUR HAIR HAS NOT STOOD UP SINCE 1999.'],
+  gnome: ['YOU PAT THE GNOME. HE IS NOT GERALD. HE IS JEALOUS OF GERALD.'],
+  flamingo: ['YOU STRAIGHTEN THE FLAMINGO. SOMEWHERE, BRENDA FEELS A DISTURBANCE OF ORDER.'],
+  hydrant: ['YOU KICK THE HYDRANT. YOUR TOE LOSES.'],
+  landed_ufo: ['YOU KNOCK ON THE SAUCER. A VOICE: NOBODY HOME. GO AWAY. WE ARE ON BREAK.'],
+  drive_in: ['ON THE BIG SCREEN: YOU. LIVE. YOU WAVE. A TRILLION PEOPLE WAVE BACK. NOBODY WAVES BACK.'],
+};
 
 export const InteractMixin = {
   initInteract() {
@@ -28,6 +52,22 @@ export const InteractMixin = {
     const consider = (kind, o, d) => {
       if (d < bd) (bd = d), (best = { kind, o });
     };
+    if (this.mode === 'story') {
+      for (const d of w.doors) {
+        const dd = Math.sqrt(dist2(d.x, d.y, p.x, p.y));
+        if (dd < 95) consider('enter', d, dd - 80);
+      }
+      const cp = w.checkpoint;
+      if (cp && !this.f('gateOpen')) {
+        const dd = Math.sqrt(dist2(cp.x, cp.y, p.x, p.y)) - 60;
+        if (dd < 70) consider('guard', cp, dd - 20);
+      }
+    }
+    for (const n of this.npcs || []) {
+      if (n.state === 'knocked') continue;
+      const dd = Math.sqrt(dist2(n.x, n.y, p.x, p.y));
+      if (dd < 60) consider('chat', n, dd - 30);
+    }
     for (const c of this.cars) {
       if (c.wreck || c.lift > 0.1) continue;
       const d = Math.sqrt(dist2(c.x, c.y, p.x, p.y)) - c.r;
@@ -141,7 +181,43 @@ export const InteractMixin = {
       case 'rig':
         this.rigGas(o);
         break;
+      case 'enter':
+        this.enterScene(o.scene, o);
+        break;
+      case 'guard':
+        this.talk('guard');
+        break;
+      case 'chat': {
+        const mood = this.npcMood(o);
+        this.float(pick(BARKS[o.fac][mood]), o.x, o.y, 12, 2);
+        o.barkT = 6;
+        if (o.state !== 'event') (o.tx = o.x), (o.ty = o.y), (o.t = 2);
+        this.sound.play('click');
+        break;
+      }
     }
+  },
+
+  // Look at / poke a prop (tap): Dale comments, the prop reacts.
+  pokeProp(q, near) {
+    q.poke = 1;
+    const use = PROP_USE[q.type];
+    if (near && use) {
+      q.useN = (q.useN || 0) + 1;
+      this.line(use[(q.useN - 1) % use.length]);
+      if (q.type === 'icecream') this.sound.play('jukebox');
+      else if (q.type === 'phone_booth') this.sound.play('beep');
+      else if (q.type === 'speaker_pole') this.sound.play('radio');
+      else if (q.type === 'pylon') (this.sound.play('zap'), this.hurtPlayer(2, q.x, q.y, 8));
+      else this.sound.play('thud');
+      return;
+    }
+    const looks = LOOK[q.type];
+    if (looks) {
+      q.lookN = (q.lookN || 0) + 1;
+      this.line(looks[(q.lookN - 1) % looks.length]);
+    } else this.line('IT IS A ' + q.type.replace(/_/g, ' ').toUpperCase() + '. IT HAS NO STRONG OPINIONS ABOUT YOU.');
+    this.sound.play('click');
   },
 
   // --- rummaging ---------------------------------------------------------------------------------
@@ -153,6 +229,25 @@ export const InteractMixin = {
     const kind = q.search;
     const r = Math.random();
     let drops = [];
+    if (this.mode === 'story') {
+      // story items hidden in specific places
+      if (q.keyItem && !this.f('found_' + q.keyItem)) {
+        this.set('found_' + q.keyItem);
+        for (const id of q.keyItem.split(',')) this.give(id);
+        const msg = { toolbox: 'UNDER THE COUNTER: A TOOLBOX WITH DUCT TAPE. THE LOOTERS TOOK THE MONEY AND LEFT THE ONLY USEFUL THING.', cowbell: 'IN THE TRAILER: A DUSTY COWBELL ON A HOOK. THE RANCHER LEFT A NOTE: MORE COWBELL. HE MEANT IT.', 'fuse,slime': 'YOU CLIMB INTO THE WRECK. A JAR OF GLOWING GOO AND A HUMMING POWER CELL. THE SAUCER WAS A FIXER-UPPER.', cables: 'ROOM 6: JUMPER CABLES, A BIBLE AND A FAKE MUSTACHE. SOMEBODY HAD PLANS.' }[q.keyItem];
+        if (msg) this.line(msg);
+      }
+      if (kind !== 'bin' || r < 0.3) {
+        const c = { house: [1, 4], store: [3, 6], potty: [2, 5], junk: [1, 3], motel: [2, 5], trailer: [1, 4], car: [0, 2], bin: [1, 2], ufo: [4, 8] }[kind] || [0, 2];
+        const n = randInt(c[0], c[1]);
+        if (n) this.earn(n);
+      }
+      if (kind === 'potty') this.float('YOU WILL NEVER BE CLEAN AGAIN.', p.x, p.y, 12, 2);
+      if (q.keyItem && kind === 'ufo') {
+        this.missionEvent('search');
+        return;
+      }
+    }
     if (kind === 'bin') {
       if (r < 0.4) drops = [weighted([['fuel', 2], ['medkit', 1]])];
       else if (r < 0.65) p.hp = Math.min(p.maxHp, p.hp + 5);
@@ -176,13 +271,20 @@ export const InteractMixin = {
   },
 
   // --- survivors on foot ---------------------------------------------------------------------------
-  rescueCiv(c) {
+  rescueCiv(c, zone) {
     c.taken = 'rescued';
     this.rescued++;
-    const e = this.world.evac;
+    let e = this.world.evac;
+    if (zone && zone.kind === 'church') {
+      e = { x: zone.x, y: zone.y };
+      c.dest = { x: zone.x - 80, y: zone.y - 120 };
+      this.converted(1);
+    }
     this.float('RESCUED!', c.x, c.y, 15, 1.6);
     this.say(pick(L.RESCUE), true);
     this.sound.play('rescue');
+    this.rate(3);
+    if (this.mode === 'story') this.earn(2);
     const type = pick(['fuel', 'repair', 'nitro', 'medkit']);
     this.pickups.push({ type, x: e.x + rand(-50, 50), y: e.y + rand(-50, 50), t: 0, life: 40, drop: true, pop: 1 });
     this.missionEvent('taxi', 1);
@@ -203,6 +305,11 @@ export const InteractMixin = {
       if (b.beep <= 0) {
         b.beep = Math.max(0.12, b.t / 5);
         this.sound.play('beep');
+      }
+      if (b.t <= 0 && !b.done && b.gate) {
+        b.done = true;
+        this.gateBoom(b);
+        continue;
       }
       if (b.t <= 0 && !b.done) {
         b.done = true;
@@ -255,8 +362,13 @@ export const InteractMixin = {
   startMissionObj(m) {
     this.mission = m;
     this.lastMission = m.type;
-    this.say(L.MISSIONS[m.type].line, true);
+    this.say(this.dispatch(L.MISSIONS[m.type].line), true);
     this.sound.play('radio');
+  },
+
+  // in the story the radio missions are Zorp's shot list
+  dispatch(text) {
+    return this.mode === 'story' ? text.replace('DISPATCH:', 'ZORP (RADIO):').replace('WE ', 'THE NETWORK ') : text;
   },
 
   missionEvent(kind, amount = 1) {
@@ -269,9 +381,18 @@ export const InteractMixin = {
   completeMission() {
     const p = this.player;
     this.missionsDone++;
-    this.showBanner('MISSION COMPLETE', L.MISSIONS[this.mission.type].text);
-    this.say(pick(L.MISSION_DONE), true);
+    this.showBanner(this.mode === 'story' ? 'GREAT SHOT!' : 'MISSION COMPLETE', L.MISSIONS[this.mission.type].text);
+    this.say(this.dispatch(pick(L.MISSION_DONE)), true);
     this.sound.play('mission');
+    this.rate(8);
+    this.flashDrones();
+    if (this.mode === 'story') {
+      this.earn(4);
+      if (this.q('shotlist') === 1) {
+        this.set('shots', (this.f('shots') || 0) + 1);
+        this.toast(Math.min(3, this.f('shots')) + '/3 SHOTS' + (this.f('shots') >= 3 ? ' - TELL ZORP' : ''), 'icon_camera', this.f('shots') >= 3 ? '#7dff9a' : undefined);
+      }
+    }
     for (let i = 0; i < 3; i++) {
       const type = weighted([['fuel', 3], ['repair', 3], ['medkit', 2], ['nitro', 2.5]]);
       this.pickups.push({ type, x: p.x + rand(-60, 60), y: p.y + rand(-60, 60), t: 0, life: 35, drop: true, pop: 1 });
@@ -282,7 +403,7 @@ export const InteractMixin = {
   },
 
   failMission(why) {
-    this.say(why || pick(L.MISSION_FAIL), true);
+    this.say(this.dispatch(why || pick(L.MISSION_FAIL)), true);
     this.mission = null;
     this.tMission = 10;
   },
@@ -290,6 +411,7 @@ export const InteractMixin = {
   updateMission(dt) {
     const m = this.mission;
     if (!m) {
+      if (this.mode === 'story' && !this.q('shotlist')) return;
       this.tMission -= dt;
       if (this.tMission <= 0) {
         this.tMission = 5;

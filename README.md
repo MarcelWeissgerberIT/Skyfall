@@ -10,7 +10,33 @@ and everybody else gets probed.
 You are **Dale** from Pine Bluff, Nevada (pop. 1,204, for now). Divorced. His shotgun was never
 loaded. But he knows where the sheriff leaves his keys. Save who you can. Nobody is coming.
 
-An isometric, real-time survival game for mobile browsers - **not a shooter**. Dale is defenceless on
+## Story mode: Earth - The Final Season
+
+Before they wrap, the Network shoots one last cheap finale special on location in Pine Bluff. The
+aliens run the town like a film set (wardens, curfews, camera drones everywhere), the humans have
+split into gangs, and after the finale the Network will *strike the set*. Kevin - tinfoil hat, right
+about everything - has a plan: hijack the broadcast tower and give the universe a different ending.
+
+- **Point & click adventure on top of the driving game.** Tap the ground to walk, tap anything to look
+  at it (everything has a sarcastic comment), tap people to talk, tap doors to go inside.
+- **Eight hand-made interiors** (Kevin's bunker, Mel's diner, the HOA clubhouse, the Desert Rats'
+  saloon, the Church of the Blessed Probe, the sheriff's office, the Network's production office and
+  the tower control room) with hotspots that react, items to take, and characters to talk to.
+- **Dialogue with choices, an inventory, item puzzles** (use an item on people, hotspots or things in
+  town), a locker keypad, distractions, blackmail, bribes and a dynamite option.
+- **Four gangs with reputation**: the HOA (collaborators with clipboards), the Church of the Blessed
+  Probe (they want to be abducted), the Desert Rats (anarchists with dynamite) and the Network (the
+  aliens). Helping one annoys its rival; hostile gangs fine, punch, preach at or zap you.
+- **Several ways through every obstacle** and **five endings**, depending on which tape you broadcast.
+- **Ratings**: camera drones film everything. Chaos raises the ratings, boredom gets you a plot twist,
+  great ratings get you a sponsor drop.
+- A living town: HOA enforcers and bikers have standoffs, cultists run into tractor beams, the Network
+  films scenes you can photobomb, wardens enforce the curfew at night.
+- Dying is not game over: the Network recasts Dale. Progress is saved automatically.
+
+## Endless survival
+
+The original mode: an isometric, real-time survival game for mobile browsers - **not a shooter**. Dale is defenceless on
 foot; cars are everything. There are no levels: the invasion escalates continuously through threat
 levels, day/night cycles, meteor showers (the actual *skyfall*), landed saucers, tractor beams that
 grab cars, people and cows, and the occasional meeting with the Network Executive herself.
@@ -22,10 +48,12 @@ fullscreen.
 
 | | Touch | Keyboard |
 |---|---|---|
+| Walk to / look at / talk to | tap | click |
 | Walk / steer | thumb anywhere (floating joystick) | WASD / arrow keys |
 | Get in / out, carjack, talk, pet, search, rig | context button | E / F |
 | Honk (in a car) / whistle (on foot) | horn button | Space / H |
 | Alien nitro | nitro button | Shift / Q |
+| Bag, tasks / gangs / map | bag and notebook buttons | I, J, M |
 | Pause | pause button | Esc / P |
 
 - **Cars:** police cruiser, sheriff's car, pickup truck and minivan, each with its own speed,

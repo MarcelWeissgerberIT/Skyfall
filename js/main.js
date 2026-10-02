@@ -78,29 +78,43 @@ function start(A, font) {
   let newRecord = false;
   let input;
 
-  const startGame = () => {
-    game.reset();
+  let mode = 'endless';
+  const startGame = (m = mode, load = false) => {
+    mode = m;
+    const save = load ? game.loadData() : null;
+    if (m === 'story' && !load) game.clearSave();
+    game.reset(m, save);
     renderer.camInit = false;
     newRecord = false;
+    ui.adv.bagOpen = false;
+    ui.adv.journal = null;
+    ui.adv.waypoint = null;
+    ui.adv.endStep = 0;
     ui.state = 'play';
     sound.musicOn = true;
+    if (m === 'story') ui.adv.preload();
   };
 
   const ui = new UI(ctx, A, font, {
     gesture: () => sound.init(),
     click: () => sound.play('click'),
-    play: () => {
+    play: (m = 'story') => {
+      if (m === 'continue') return startGame('story', true);
+      mode = m;
       if (store.get('skyfall.intro', '0') !== '1') {
         sound.musicOn = false;
         ui.startIntro(true);
-      } else startGame();
+      } else startGame(m);
     },
     introDone: (thenPlay) => {
       store.set('skyfall.intro', '1');
       sound.musicOn = true;
-      if (thenPlay) startGame();
+      if (thenPlay) startGame(mode);
       else ui.state = 'title';
     },
+    hasSave: () => !!game.loadData(),
+    endings: () => game.endingsFound().length,
+    renderer: () => renderer,
     pause: () => {
       if (ui.state === 'play') ui.state = 'pause';
       sound.engine(false);
@@ -112,11 +126,16 @@ function start(A, font) {
       if (car && car.V.siren) sound.siren(true);
     },
     menu: () => {
+      if (game.mode === 'story' && !game.over && !game.endingId) game.save();
+      game.scene = null;
+      game.dialog = null;
+      game.endingId = null;
       ui.state = 'title';
+      sound.setStyle('world');
       sound.engine(false);
       sound.siren(false);
     },
-    restart: () => startGame(),
+    restart: () => startGame(mode),
     toggleSound: () => sound.toggle(),
     soundOn: () => sound.on,
     best: () => best,
@@ -150,8 +169,11 @@ function start(A, font) {
     const st = ui.state;
     if (st === 'play') {
       game.viewR = renderer.viewRadius();
-      game.update(dt, input.poll());
-      if (game.over) {
+      const inp = input.poll();
+      game.update(dt, ui.overlayOpen() ? idle : inp);
+      // interiors and the ending have their own soundtrack
+      sound.setStyle(game.endingId ? 'tower' : game.scene ? game.scene.def.music : 'world');
+      if (game.over && game.mode !== 'story') {
         ui.state = 'over';
         if (game.time > best) {
           best = game.time;
@@ -159,10 +181,12 @@ function start(A, font) {
           store.set('skyfall.best', String(best));
         }
       }
+      else if (game.over) ui.state = 'over';
     } else if (st === 'over') {
       game.update(dt, idle);
     }
-    if (st === 'play' || st === 'pause' || st === 'over') renderer.render(game, st === 'pause' ? 0 : dt);
+    // the town is not drawn while Dale is inside somewhere (or watching the ending)
+    if ((st === 'play' || st === 'pause' || st === 'over') && !game.scene && !game.endingId) renderer.render(game, st === 'pause' ? 0 : dt);
     ui.draw(dt, game, renderer);
     requestAnimationFrame(frame);
   };

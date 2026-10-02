@@ -80,6 +80,64 @@ SPRITES = {
     "pk_fuel": ("ae_fuel", (140, 140)),
     "pk_tools": ("af_tools", (140, 140)),
     "dog": ("ai_dog", (160, 160)),
+    # --- adventure: story characters (also used big in the interior scenes)
+    "npc_kevin": ("b0_kevin", (360, 520)),
+    "npc_mel": ("b1_mel", (360, 520)),
+    "npc_brenda": ("b2_brenda", (360, 520)),
+    "npc_gloria": ("b3_gloria", (380, 520)),
+    "npc_barb": ("b4_barb", (380, 520)),
+    "npc_zorp": ("b5_zorp", (360, 520)),
+    "npc_sheriff": ("b6_sheriff", (360, 520)),
+    "npc_hoa": ("b7_hoa_lady", (220, 300)),
+    "npc_biker": ("b8_biker", (220, 300)),
+    "npc_cultist": ("b9_cultist", (220, 300)),
+    "npc_warden": ("ba_warden", (220, 300)),
+    "drone": ("bb_drone", (200, 200)),
+    # --- landmarks
+    "tower": ("c0_tower", (420, 640)),
+    "drive_in": ("c1_drivein", (520, 520)),
+    "net_trailer": ("c2_trailer", (460, 460)),
+    "checkpoint": ("c3_checkpoint", (420, 420)),
+    "pylon": ("c4_pylon", (120, 220)),
+    "church": ("c5_church", (520, 520)),
+    "clubhouse": ("c6_clubhouse", (520, 520)),
+    "diner": ("c7_diner", (500, 500)),
+    "motel": ("c8_motel", (520, 520)),
+    "saloon": ("c9_saloon", (520, 520)),
+    "bunker": ("ca_bunker", (400, 400)),
+    "sheriff_office": ("cb_sheriff_office", (500, 500)),
+    # --- props
+    "billboard_a": ("d0_billboard_a", (400, 400)),
+    "billboard_b": ("d1_billboard_b", (400, 400)),
+    "burn_barrel": ("d2_barrel", (150, 150)),
+    "barricade": ("d3_barricade", (360, 360)),
+    "phone_booth": ("d4_phone", (180, 260)),
+    "icecream": ("d5_icecream", (340, 340)),
+    "porta_potty": ("d6_potty", (170, 240)),
+    "speaker_pole": ("d7_speaker", (200, 300)),
+    "crashed_ufo": ("d8_crashed_ufo", (440, 440)),
+    "saguaro": ("d9_saguaro", (180, 280)),
+    "junk_pile": ("da_junk", (400, 400)),
+    "gnome": ("db_gnome", (140, 180)),
+}
+
+# inventory items (assets/sprites/it_*.webp)
+ITEMS = {
+    "lanyard": "i00_lanyard", "setpass": "i01_setpass", "remote": "i02_remote", "dynamite": "i03_dynamite",
+    "pie": "i04_pie", "coffee": "i05_coffee", "keys": "i06_keys", "donut": "i07_donut", "cowbell": "i08_cowbell",
+    "tape_hoa": "i09_tape_hoa", "tape_sermon": "i10_tape_sermon", "tape_metal": "i11_tape_metal",
+    "tape_cow": "i12_tape_cow", "tape_kevin": "i13_tape_kevin", "keycard": "i14_keycard", "megaphone": "i15_megaphone",
+    "finebook": "i16_finebook", "coupons": "i17_coupons", "fuse": "i18_fuse", "cables": "i19_cables",
+    "slime": "i20_slime", "beans": "i21_beans", "tinfoil": "i22_tinfoil", "photo": "i23_photo", "gnome": "db_gnome", "trophy": "i24_trophy",
+}
+
+# interior point & click scenes (assets/scenes/*.webp, loaded on demand)
+SCENES = {
+    "bunker": "s0_bunker", "diner": "s1_diner", "church": "s2_church", "clubhouse": "s3_clubhouse",
+    "saloon": "s4_saloon", "office": "s5_office", "sheriff": "s6_sheriff", "control": "s7_control",
+    # ending art
+    "end_kevin": "f1_end_kevin", "end_hoa": "f2_end_hoa", "end_church": "f3_end_church",
+    "end_metal": "f4_end_metal", "end_cow": "f5_end_cow",
 }
 
 UI = {
@@ -103,6 +161,18 @@ UI = {
     "btn_boost": ("ad_b_boost", (180, 180)),
     "icon_fuel": ("ag_i_fuel", (128, 128)),
     "icon_seat": ("ah_i_seat", (128, 128)),
+    "em_hoa": ("e0_em_hoa", (160, 160)),
+    "em_church": ("e1_em_church", (160, 160)),
+    "em_rats": ("e2_em_rats", (160, 160)),
+    "em_network": ("e3_em_network", (160, 160)),
+    "btn_bag": ("e4_b_bag", (160, 160)),
+    "btn_journal": ("e5_b_journal", (160, 160)),
+    "btn_look": ("e6_b_look", (160, 160)),
+    "btn_use": ("e7_b_use", (160, 160)),
+    "btn_map": ("e8_b_map", (160, 160)),
+    "btn_enter": ("e9_b_enter", (180, 180)),
+    "icon_coupon": ("ea_i_coupon", (128, 128)),
+    "icon_camera": ("eb_i_camera", (128, 128)),
 }
 
 TEXTURES = {
@@ -266,7 +336,7 @@ def build_font():
 
 
 def main():
-    for d in ("sprites", "ui", "tex", "font"):
+    for d in ("sprites", "ui", "tex", "font", "scenes"):
         os.makedirs(os.path.join(OUT, d), exist_ok=True)
     manifest = {"sprites": {}, "ui": {}}
     for group, table in (("sprites", SPRITES), ("ui", UI)):
@@ -283,6 +353,25 @@ def main():
     for name, raw in TEXTURES.items():
         tex = seamless(Image.open(os.path.join(RAW, raw + ".png")))
         tex.save(os.path.join(OUT, "tex", name + ".webp"), "WEBP", quality=82, method=6)
+    for name, raw in ITEMS.items():
+        im = clean_alpha(fit(trim(load(raw)), (160, 160)))
+        save_webp(im, os.path.join(OUT, "sprites", "it_" + name + ".webp"))
+        manifest["sprites"]["it_" + name] = [im.width, im.height]
+    manifest["scenes"] = {}
+    for name, raw in SCENES.items():
+        im = Image.open(os.path.join(RAW, raw + ".png")).convert("RGB").resize((1280, 1280), Image.LANCZOS)
+        save_webp(im, os.path.join(OUT, "scenes", name + ".webp"), q=80)
+        manifest["scenes"][name] = [im.width, im.height]
+    # the iron bars of the sheriff's jail cell as an overlay, so the sheriff can stand behind them
+    cell = Image.open(os.path.join(RAW, SCENES["sheriff"] + ".png")).convert("RGB").resize((1280, 1280), Image.LANCZOS)
+    box = (0, int(0.08 * 1280), int(0.33 * 1280), int(0.72 * 1280))
+    c = np.asarray(cell.crop(box)).astype(np.float32)
+    lum = c[..., 0] * 0.3 + c[..., 1] * 0.59 + c[..., 2] * 0.11
+    sat = c.max(axis=2) - c.min(axis=2)
+    a = np.clip((70 - lum) / 30, 0, 1) * np.clip((40 - sat) / 20, 0, 1)
+    bars = np.dstack([c, a * 255]).astype(np.uint8)
+    save_webp(Image.fromarray(bars, "RGBA"), os.path.join(OUT, "scenes", "sheriff_bars.webp"), q=90)
+    manifest["scenes"]["sheriff_bars"] = [box[2] - box[0], box[3] - box[1]]
     splash = Image.open(os.path.join(RAW, "35_splash.png")).convert("RGB")
     splash.save(os.path.join(OUT, "ui", "splash.webp"), "WEBP", quality=80, method=6)
     manifest["ui"]["splash"] = list(splash.size)

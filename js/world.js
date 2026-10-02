@@ -1,18 +1,22 @@
-// Procedural desert town: terrain, props, collisions and enemy path finding.
+// Pine Bluff, Nevada: a desert town under new (alien) management. Fixed districts so the story can
+// send Dale places, procedural details so no two playthroughs look the same.
 import { TILE, C, mulberry32, valueNoise, hash2 } from './util.js';
 
-export const N = 72; // map size in tiles
+export const N = 96; // map size in tiles
 export const WORLD = N * TILE;
 export const TT = { SAND: 0, DIRT: 1, GRASS: 2, CONC: 3, ASPH: 4 };
 
-const T0 = 17, PITCH = 12, NB = 3;
+const T0 = 29, PITCH = 12, NB = 3;
 const TOWN_A = T0, TOWN_B = T0 + NB * PITCH + 1; // inclusive tile range of the town
 const ROADS = [T0, T0 + 12, T0 + 24, T0 + 36]; // each road is two tiles wide
 const HIGHWAYS = [T0 + 12, T0 + 24];
+// the Network's studio lot sits north of town and swallows the northern highway
+export const LOT = { x0: 44, y0: 4, x1: 64, y1: 24 };
 
 const isRoad = (i) => ROADS.some((r) => i === r || i === r + 1);
 const isHighway = (i) => HIGHWAYS.some((r) => i === r || i === r + 1);
 const inTown = (i, j) => i >= TOWN_A && i <= TOWN_B && j >= TOWN_A && j <= TOWN_B;
+const inLot = (i, j) => i >= LOT.x0 && i <= LOT.x1 && j >= LOT.y0 && j <= LOT.y1;
 
 // Prop catalogue. box = footprint in tiles (x, y) before flipping; flip swaps it.
 // drawW / drawH = sprite size in screen units at zoom 1. base = ground anchor above the
@@ -40,6 +44,33 @@ export const PROP_DEFS = {
   streetlight: { circle: 5, drawH: 150, base: 0.02, light: true, breakable: 4200 },
   sandbags: { circle: 26, drawW: 104, base: 0.3 },
   bus: { box: [2.7, 1.0], drawW: 236 },
+  // --- the adventure ---
+  tower: { box: [2.6, 2.6], drawW: 330, glow: 'magenta' },
+  drive_in: { box: [3.2, 1.6], drawW: 330 },
+  net_trailer: { box: [3, 1.4], drawW: 300 },
+  checkpoint: { box: [1.6, 1.0], drawW: 210 },
+  pylon: { circle: 8, drawH: 74, base: 0.02 },
+  church: { box: [3, 3], drawW: 300 },
+  clubhouse: { box: [4, 3], drawW: 340 },
+  diner: { box: [4, 2], drawW: 330 },
+  motel: { box: [5, 2], drawW: 370 },
+  saloon: { box: [4, 3], drawW: 340 },
+  bunker: { box: [2, 2], drawW: 196 },
+  sheriff_office: { box: [3, 3], drawW: 280 },
+  billboard_a: { box: [2, 0.6], drawW: 220 },
+  billboard_b: { box: [2, 0.6], drawW: 220 },
+  burn_barrel: { circle: 12, drawH: 40, base: 0.04, fire: true },
+  barricade: { box: [3, 1], drawW: 210 },
+  phone_booth: { circle: 12, drawH: 82, base: 0.03 },
+  icecream: { box: [1.75, 0.9], drawW: 142 },
+  porta_potty: { circle: 14, drawH: 80, base: 0.03 },
+  speaker_pole: { circle: 6, drawH: 150, base: 0.02 },
+  crashed_ufo: { box: [3, 3], drawW: 290 },
+  saguaro: { circle: 9, drawH: 132, base: 0.02, sway: 0.01, breakable: 12000 },
+  junk_pile: { box: [2, 2], drawW: 200 },
+  gnome: { circle: 4, drawH: 24, base: 0.04, breakable: 30, soft: true },
+  landed_ufo: { box: [2.4, 2.4], drawW: 200 },
+  wall: { invisible: true },
 };
 
 // Prop type -> [front points along +x when unflipped, vehicle type]
@@ -47,10 +78,16 @@ const DRIVABLE = {
   car_police: [true, 'police'], car_minivan: [true, 'minivan'], car_sheriff: [false, 'sheriff'], car_pickup: [false, 'pickup'],
 };
 
-// What you find when you rummage through things, and what you can drive.
+// What you find when you rummage through things.
 const SEARCH_KIND = {
   house_a: 'house', house_b: 'house', house_c: 'house', store: 'store', trailer: 'trailer',
-  car_wreck: 'car', bin_mailbox: 'bin',
+  car_wreck: 'car', bin_mailbox: 'bin', porta_potty: 'potty', junk_pile: 'junk', crashed_ufo: 'ufo', motel: 'motel',
+};
+
+// Buildings with an interior scene: prop type -> scene id
+export const DOORS = {
+  bunker: 'bunker', diner: 'diner', church: 'church', clubhouse: 'clubhouse', saloon: 'saloon',
+  net_trailer: 'office', sheriff_office: 'sheriff', tower: 'control',
 };
 
 export class World {
@@ -58,7 +95,7 @@ export class World {
     this.seed = seed;
     this.rnd = mulberry32(seed);
     this.tiles = new Uint8Array(N * N);
-    this.solid = new Uint8Array(N * N); // blocks bullets & line of sight
+    this.solid = new Uint8Array(N * N); // blocks line of sight
     this.blocked = new Uint8Array(N * N); // blocks path finding / spawning
     this.occ = new Uint8Array(N * N); // generation helper
     this.cgrid = Array.from({ length: N * N }, () => []);
@@ -68,6 +105,13 @@ export class World {
     this.lootSpots = [];
     this.cows = [];
     this.parkedCars = [];
+    this.pools = [];
+    this.circles = []; // crop circles
+    this.stains = [];
+    this.fences = [];
+    this.doors = [];
+    this.landmarks = [];
+    this.spawns = { hoa: [], rats: [], church: [], network: [] };
     this.flow = new Uint16Array(N * N);
     this.flowSrc = -1;
     this.queue = new Int32Array(N * N);
@@ -86,13 +130,13 @@ export class World {
   // Terrain for any tile, including outside the map (for rendering only).
   terrain(i, j) {
     if (i >= 0 && j >= 0 && i < N && j < N) return this.tiles[j * N + i];
+    if (j < 0 && (i === 53 || i === 54)) return TT.SAND;
     if (isHighway(i) || isHighway(j)) return TT.ASPH;
     return TT.SAND;
   }
 
   generate() {
-    const s = this.seed;
-    // Base desert + town grid.
+    // Base desert + town grid + highways.
     for (let j = 0; j < N; j++) {
       for (let i = 0; i < N; i++) {
         let t = TT.SAND;
@@ -100,6 +144,8 @@ export class World {
           if (isRoad(i) || isRoad(j)) t = TT.ASPH;
           else t = TT.CONC; // sidewalks; block interiors are overwritten below
         } else if (isHighway(i) || isHighway(j)) t = TT.ASPH;
+        // the northern highway ends at the studio gate
+        if ((i === 53 || i === 54) && j < LOT.y0) t = TT.SAND;
         this.tiles[j * N + i] = t;
       }
     }
@@ -110,22 +156,27 @@ export class World {
         if (t === TT.ASPH || (inTown(i, j) && t === TT.CONC)) this.occ[j * N + i] = 1;
       }
 
-    // Town blocks.
-    const kinds = [];
-    for (let b = 0; b < NB * NB; b++) kinds.push('res');
-    kinds[4] = 'plaza';
-    const others = [0, 1, 2, 3, 5, 6, 7, 8];
-    kinds[others[this.ri(0, others.length - 1)]] = 'outpost';
+    // Town blocks: the north row is the HOA's gated paradise.
+    const kinds = ['clubhouse', 'estate', 'estate', 'kevin', 'plaza', 'sheriff', 'res', 'strip', 'res'];
     for (let bj = 0; bj < NB; bj++)
       for (let bi = 0; bi < NB; bi++) {
         const bx = T0 + bi * PITCH + 3, by = T0 + bj * PITCH + 3;
         const k = kinds[bj * NB + bi];
         if (k === 'res') this.genResidential(bx, by);
+        else if (k === 'estate') this.genResidential(bx, by, true);
+        else if (k === 'clubhouse') this.genClubhouse(bx, by);
+        else if (k === 'kevin') this.genKevin(bx, by);
         else if (k === 'plaza') this.genPlaza(bx, by);
-        else this.genOutpost(bx, by);
+        else if (k === 'sheriff') this.genSheriff(bx, by);
+        else if (k === 'strip') this.genStrip(bx, by);
       }
 
+    this.genLot();
+    this.genJunkyard();
+    this.genChurch();
+    this.genRanch();
     this.genStreets();
+    this.genRoadside();
     this.genDesert();
     this.genDashes();
     this.genPatches();
@@ -135,6 +186,13 @@ export class World {
 
   setTile(i, j, t) {
     if (i >= 0 && j >= 0 && i < N && j < N) this.tiles[j * N + i] = t;
+  }
+  fillTiles(i0, j0, i1, j1, t, keepRoads = true) {
+    for (let j = j0; j <= j1; j++)
+      for (let i = i0; i <= i1; i++) {
+        if (keepRoads && this.terrain(i, j) === TT.ASPH) continue;
+        this.setTile(i, j, t);
+      }
   }
   free(i, j) {
     return i >= 0 && j >= 0 && i < N && j < N && !this.occ[j * N + i];
@@ -146,13 +204,26 @@ export class World {
   occupy(i, j, w = 1, h = 1) {
     for (let y = j; y < j + h; y++) for (let x = i; x < i + w; x++) if (x >= 0 && y >= 0 && x < N && y < N) this.occ[y * N + x] = 1;
   }
+  // place a prop by tile coordinates of its footprint centre and reserve the tiles
+  place(type, ci, cj, flip = false, reserve = true) {
+    const def = PROP_DEFS[type];
+    const p = this.addProp(type, ci * TILE, cj * TILE, flip);
+    if (reserve) {
+      if (def.box) {
+        let [bw, bh] = def.box;
+        if (flip) [bw, bh] = [bh, bw];
+        this.occupy(Math.floor(ci - bw / 2), Math.floor(cj - bh / 2), Math.ceil(bw) + 1, Math.ceil(bh) + 1);
+      } else this.occupy(Math.floor(ci), Math.floor(cj));
+    }
+    return p;
+  }
 
   addProp(type, x, y, flip = false, decorOnly = false) {
     const def = PROP_DEFS[type];
     const vt = DRIVABLE[type];
     if (vt && !decorOnly && x >= 0 && y >= 0 && x < N * TILE && y < N * TILE) {
       // drivable cars are simulated as vehicles; remember where they are parked
-      const [nativeX, ] = vt;
+      const [nativeX] = vt;
       let h = (nativeX ? 0 : Math.PI / 2) + (flip ? (nativeX ? Math.PI / 2 : -Math.PI / 2) : 0);
       if (this.rnd() < 0.5) h += Math.PI;
       this.parkedCars.push({ type: vt[1], x, y, h });
@@ -165,7 +236,6 @@ export class World {
       const wx = bw * TILE, wy = bh * TILE;
       p.box = { x0: x - wx / 2, y0: y - wy / 2, x1: x + wx / 2, y1: y + wy / 2 };
       p.baseOff = (wx + wy) * C * 0.25;
-      // Sort by the front corner so characters standing beside the box sort correctly.
       p.depth = x + y;
     } else if (def.circle) {
       p.circle = def.circle;
@@ -179,6 +249,22 @@ export class World {
     if (SEARCH_KIND[type]) p.search = SEARCH_KIND[type];
     if (type === 'gas_station') p.riggable = true;
     if (def.breakable) p.breakable = def.breakable;
+    if (DOORS[type]) {
+      p.scene = DOORS[type];
+      // the door is in front of the building's nearest corner
+      const d = { scene: p.scene, prop: p, x: p.box.x1 + 22, y: p.box.y1 + 22 };
+      p.door = d;
+      this.doors.push(d);
+    }
+    return p;
+  }
+
+  // Invisible collision walls (fences, force fields).
+  addWall(x0, y0, x1, y1, tag) {
+    const p = { type: 'wall', sprite: null, x: (x0 + x1) / 2, y: (y0 + y1) / 2, flip: false, def: PROP_DEFS.wall, depth: 0, tag };
+    p.box = { x0, y0, x1, y1 };
+    this.props.push(p);
+    this.registerCollider(p);
     return p;
   }
 
@@ -216,45 +302,94 @@ export class World {
     else (x0 = p.x - p.circle, y0 = p.y - p.circle, x1 = p.x + p.circle, y1 = p.y + p.circle);
     const i0 = Math.max(0, Math.floor(x0 / TILE)), i1 = Math.min(N - 1, Math.floor(x1 / TILE));
     const j0 = Math.max(0, Math.floor(y0 / TILE)), j1 = Math.min(N - 1, Math.floor(y1 / TILE));
+    const thin = p.box && (x1 - x0 < TILE || y1 - y0 < TILE);
     for (let j = j0; j <= j1; j++)
       for (let i = i0; i <= i1; i++) {
         this.cgrid[j * N + i].push(p);
         const cx = (i + 0.5) * TILE, cy = (j + 0.5) * TILE;
         if (p.box) {
-          if (cx > x0 && cx < x1 && cy > y0 && cy < y1) this.solid[j * N + i] = this.blocked[j * N + i] = 1;
+          if (thin) {
+            // thin walls block path finding in every tile they touch
+            if (p.def.invisible) this.blocked[j * N + i] = 1;
+          } else if (cx > x0 && cx < x1 && cy > y0 && cy < y1) this.solid[j * N + i] = this.blocked[j * N + i] = 1;
         } else if (p.circle >= 20 && i === Math.floor(p.x / TILE) && j === Math.floor(p.y / TILE)) {
           this.blocked[j * N + i] = 1;
         }
       }
   }
 
-  genResidential(bx, by) {
+  landmark(id, name, x, y, icon) {
+    const l = { id, name, x, y, icon };
+    this.landmarks.push(l);
+    return l;
+  }
+
+  // --- town blocks ---------------------------------------------------------------------------
+  genResidential(bx, by, estate = false) {
     for (let j = 0; j < 8; j++) for (let i = 0; i < 8; i++) this.setTile(bx + i, by + j, TT.GRASS);
     const houses = ['house_a', 'house_b', 'house_c'];
     for (let ly = 0; ly < 2; ly++)
       for (let lx = 0; lx < 2; lx++) {
-        if (this.rnd() < 0.08) continue; // empty lot
+        if (!estate && this.rnd() < 0.08) continue; // empty lot
         const ox = bx + lx * 4 + this.ri(0, 1), oy = by + ly * 4 + this.ri(0, 1);
         this.addProp(houses[this.ri(0, 2)], (ox + 1.5) * TILE, (oy + 1.5) * TILE, this.rnd() < 0.5);
         this.occupy(ox, oy, 3, 3);
       }
-    this.decorateBlock(bx, by, { palms: 0.22, cars: 2, bins: 2 });
+    this.decorateBlock(bx, by, { palms: estate ? 0.12 : 0.22, cars: estate ? 1 : 2, bins: 2, flamingos: estate ? 0.2 : 0.07, gnomes: estate ? 0.05 : 0 });
+    if (estate) this.spawns.hoa.push({ x: (bx + 4) * TILE, y: (by + 4) * TILE });
+  }
+
+  genClubhouse(bx, by) {
+    for (let j = 0; j < 8; j++) for (let i = 0; i < 8; i++) this.setTile(bx + i, by + j, TT.GRASS);
+    const p = this.addProp('clubhouse', (bx + 3) * TILE, (by + 2.5) * TILE, false);
+    this.occupy(bx, by, 6, 5);
+    // the pool, where nobody has been allowed to swim since 1994
+    this.fillTiles(bx + 1, by + 5, bx + 6, by + 7, TT.CONC);
+    this.pools.push({ x0: (bx + 1.6) * TILE, y0: (by + 5.5) * TILE, x1: (bx + 5.6) * TILE, y1: (by + 7.3) * TILE });
+    this.occupy(bx + 1, by + 5, 6, 3);
+    for (let k = 0; k < 6; k++) this.addProp('flamingo', (bx + 6.5 + this.r(-0.3, 0.6)) * TILE, (by + 0.6 + k * 0.9) * TILE, this.rnd() < 0.5);
+    this.addProp('gnome', (bx + 6.6) * TILE, (by + 5.4) * TILE, true);
+    this.addProp('palm', (bx + 7.3) * TILE, (by + 7.2) * TILE, false);
+    this.addProp('palm', (bx + 0.6) * TILE, (by + 7.4) * TILE, true);
+    this.landmark('clubhouse', 'HOA CLUBHOUSE', p.x, p.y, 'em_hoa');
+    this.spawns.hoa.push({ x: p.door.x + 60, y: p.door.y + 40 });
+  }
+
+  genKevin(bx, by) {
+    for (let j = 0; j < 8; j++) for (let i = 0; i < 8; i++) this.setTile(bx + i, by + j, TT.GRASS);
+    // Kevin's mom's house, and the bunker in her back yard
+    this.addProp('house_b', (bx + 2.5) * TILE, (by + 2) * TILE, false);
+    this.occupy(bx + 1, by + 0, 3, 3);
+    const b = this.addProp('bunker', (bx + 5.5) * TILE, (by + 2) * TILE, false);
+    this.occupy(bx + 4, by + 0, 3, 3);
+    this.addProp('house_c', (bx + 2.5) * TILE, (by + 6) * TILE, true);
+    this.occupy(bx + 1, by + 4, 3, 3);
+    this.addProp('house_a', (bx + 6) * TILE, (by + 6) * TILE, false);
+    this.occupy(bx + 5, by + 5, 3, 3);
+    this.addProp('bin_mailbox', (bx + 4.4) * TILE, (by + 3.6) * TILE, false);
+    this.landmark('bunker', "KEVIN'S BUNKER", b.x, b.y, 'btn_enter');
+    this.decorateBlock(bx, by, { palms: 0.15, cars: 1, bins: 1 });
   }
 
   genPlaza(bx, by) {
     for (let j = 0; j < 8; j++) for (let i = 0; i < 8; i++) this.setTile(bx + i, by + j, TT.CONC);
     const sflip = this.rnd() < 0.5;
-    this.addProp('store', (bx + 1.5) * TILE, (by + 1.5) * TILE, sflip);
+    const st = this.addProp('store', (bx + 1.5) * TILE, (by + 1.5) * TILE, sflip);
+    st.keyItem = 'toolbox';
     this.occupy(bx, by, 3, 3);
     this.addProp('gas_station', (bx + 6) * TILE, (by + 6.5) * TILE, false);
     this.occupy(bx + 4, by + 5, 4, 3);
+    this.addProp('phone_booth', (bx + 4.4) * TILE, (by + 0.6) * TILE, false);
+    this.occupy(bx + 4, by, 1, 1);
+    this.landmark('plaza', 'GAS AND GROCERIES', st.x, st.y, 'icon_fuel');
     this.decorateBlock(bx, by, { palms: 0.12, cars: 3, bins: 1 });
   }
 
-  genOutpost(bx, by) {
+  genSheriff(bx, by) {
     for (let j = 0; j < 8; j++) for (let i = 0; i < 8; i++) this.setTile(bx + i, by + j, TT.DIRT);
-    this.addProp('trailer', (bx + 1.05) * TILE + 34, (by + 1.05) * TILE + 2, false);
-    this.occupy(bx, by, 3, 2);
+    const so = this.addProp('sheriff_office', (bx + 1.5) * TILE, (by + 1.5) * TILE, false);
+    this.occupy(bx, by, 3, 3);
+    this.landmark('sheriff', "SHERIFF'S OFFICE", so.x, so.y, 'btn_enter');
     const cx = (bx + 4.5) * TILE, cy = (by + 4.5) * TILE;
     for (let k = 0; k < 7; k++) {
       if (k === 2) continue; // gap to walk through
@@ -269,7 +404,26 @@ export class World {
     this.reserved = new Set();
     for (let i = bx + 3; i < bx + 6; i++) this.reserved.add((by - 1) * N + i);
     this.evac = { x: (bx + 4.5) * TILE, y: (by + 1.0) * TILE };
+    this.landmark('evac', 'EVAC BUS', this.evac.x, this.evac.y, 'icon_seat');
     this.decorateBlock(bx, by, { palms: 0, cars: 2, bins: 0, police: true });
+  }
+
+  genStrip(bx, by) {
+    // the strip: a diner, a motel, a parking lot and broken dreams
+    for (let j = 0; j < 8; j++) for (let i = 0; i < 8; i++) this.setTile(bx + i, by + j, TT.CONC);
+    const d = this.addProp('diner', (bx + 2.2) * TILE, (by + 1.3) * TILE, false);
+    this.occupy(bx, by, 5, 3);
+    const m = this.addProp('motel', (bx + 5.4) * TILE, (by + 5.8) * TILE, true);
+    m.keyItem = 'cables';
+    this.occupy(bx + 4, by + 3, 4, 5);
+    this.addProp('icecream', (bx + 1.4) * TILE, (by + 5.2) * TILE, false);
+    this.occupy(bx, by + 4, 3, 2);
+    this.addProp('phone_booth', (bx + 6.6) * TILE, (by + 0.6) * TILE, true);
+    this.occupy(bx + 6, by, 1, 1);
+    this.addProp('speaker_pole', (bx + 2.6) * TILE, (by + 7.4) * TILE, false);
+    this.landmark('diner', "MEL'S DINER", d.x, d.y, 'btn_enter');
+    this.landmark('motel', 'SPACE AGE MOTEL', m.x, m.y, 'btn_search');
+    this.decorateBlock(bx, by, { palms: 0.08, cars: 2, bins: 1 });
   }
 
   decorateBlock(bx, by, o) {
@@ -289,6 +443,7 @@ export class World {
       }
       placed++;
     }
+    const fl = o.flamingos === undefined ? 0.07 : o.flamingos;
     for (let j = 0; j < 8; j++)
       for (let i = 0; i < 8; i++) {
         const x = bx + i, y = by + j;
@@ -301,14 +456,138 @@ export class World {
         } else if (edge && r < o.palms + 0.06 && o.bins) {
           this.addProp('bin_mailbox', (x + 0.5) * TILE, (y + 0.5) * TILE, this.rnd() < 0.5);
           this.occupy(x, y);
-        } else if (o.bins && r < o.palms + 0.13) {
+        } else if (o.bins && r < o.palms + 0.06 + fl) {
           // a little flock of plastic flamingos
           const n = this.ri(1, 3);
           for (let f = 0; f < n; f++) this.addProp('flamingo', (x + 0.25 + f * 0.25) * TILE, (y + 0.3 + this.r(0, 0.4)) * TILE, this.rnd() < 0.5);
+        } else if (o.gnomes && r < o.palms + 0.06 + fl + o.gnomes) {
+          this.addProp('gnome', (x + 0.5) * TILE, (y + 0.5) * TILE, this.rnd() < 0.5);
         } else if (r > 0.93) {
           this.lootSpots.push({ x: (x + 0.5) * TILE, y: (y + 0.5) * TILE, w: 1 });
         }
       }
+  }
+
+  // --- desert districts --------------------------------------------------------------------------
+  genLot() {
+    const L = LOT;
+    // tarmac and a road from the gate to the tower
+    this.fillTiles(L.x0, L.y0, L.x1, L.y1, TT.CONC, false);
+    for (let j = L.y0 + 4; j <= L.y1; j++) for (const i of [53, 54]) this.setTile(i, j, TT.ASPH);
+    for (let j = L.y0; j <= L.y1; j++) for (let i = L.x0; i <= L.x1; i++) this.occ[j * N + i] = 1;
+    // force-field fence: pylons every two tiles, invisible walls in between, a gate on the highway
+    const T = TILE;
+    const ring = [];
+    for (let i = L.x0; i <= L.x1; i += 2) ring.push([i, L.y0]);
+    for (let j = L.y0 + 2; j <= L.y1; j += 2) ring.push([L.x1, j]);
+    for (let i = L.x1 - 2; i >= L.x0; i -= 2) ring.push([i, L.y1]);
+    for (let j = L.y1 - 2; j > L.y0; j -= 2) ring.push([L.x0, j]);
+    const gate = (a, b) => a[1] === L.y1 && b[1] === L.y1 && Math.min(a[0], b[0]) >= 52 && Math.max(a[0], b[0]) <= 56;
+    for (let k = 0; k < ring.length; k++) {
+      const a = ring[k], b = ring[(k + 1) % ring.length];
+      const ax = (a[0] + 0.5) * T, ay = (a[1] + 0.5) * T, bxx = (b[0] + 0.5) * T, byy = (b[1] + 0.5) * T;
+      this.addProp('pylon', ax, ay, false);
+      if (gate(a, b)) continue;
+      this.fences.push({ x0: ax, y0: ay, x1: bxx, y1: byy });
+      this.addWall(Math.min(ax, bxx) - 6, Math.min(ay, byy) - 6, Math.max(ax, bxx) + 6, Math.max(ay, byy) + 6, 'fence');
+    }
+    // the gate: a force field across both lanes, and the guard booth next to it
+    const gy = (L.y1 + 0.5) * T;
+    this.gate = { x0: 52.5 * T, x1: 56.5 * T, y: gy };
+    this.gateWall = this.addWall(52.5 * T, gy - 8, 56.5 * T, gy + 8, 'gate');
+    this.checkpoint = this.addProp('checkpoint', 57.6 * T, (L.y1 + 1.8) * T, false);
+    this.occupy(56, L.y1, 3, 3);
+    this.landmark('gate', 'STUDIO GATE', this.gate.x0 + 2 * T, gy, 'em_network');
+    // the buildings
+    const tw = this.addProp('tower', 54 * T, 8 * T, false);
+    this.tower = tw;
+    this.landmark('tower', 'BROADCAST TOWER', tw.x, tw.y, 'em_network');
+    this.addProp('drive_in', 48 * T, 11 * T, false);
+    const tr = this.addProp('net_trailer', 60 * T, 15.5 * T, false);
+    this.landmark('office', 'PRODUCTION OFFICE', tr.x, tr.y, 'btn_enter');
+    this.addProp('trailer', 47.5 * T, 19 * T, false);
+    this.addProp('trailer', 61 * T, 20.5 * T, true);
+    this.addProp('landed_ufo', 59.5 * T, 9 * T, false);
+    this.addProp('porta_potty', 45.6 * T, 22.5 * T, false);
+    this.addProp('porta_potty', 46.6 * T, 22.6 * T, false);
+    this.addProp('speaker_pole', 51 * T, 21.5 * T, false);
+    this.addProp('speaker_pole', 57 * T, 12.5 * T, true);
+    this.addProp('sandbags', 50 * T, 15 * T, false);
+    this.addProp('car_wreck', 63 * T, 6 * T, false);
+    this.spawns.network.push({ x: 54 * T, y: 18 * T }, { x: 49 * T, y: 14 * T }, { x: 59 * T, y: 12 * T });
+  }
+
+  genJunkyard() {
+    const x0 = 4, y0 = 44, x1 = 24, y1 = 62;
+    for (let j = y0; j <= y1; j++)
+      for (let i = x0; i <= x1; i++) {
+        const d = Math.hypot((i - 14) / 11, (j - 53) / 10);
+        if (d < 1 && this.terrain(i, j) !== TT.ASPH) this.setTile(i, j, TT.DIRT);
+      }
+    for (let j = y0; j <= y1; j++) for (let i = x0; i <= x1; i++) if (Math.hypot((i - 14) / 11, (j - 53) / 10) < 1) this.occ[j * N + i] = 1;
+    const T = TILE;
+    const s = this.addProp('saloon', 13 * T, 48.5 * T, false);
+    this.landmark('saloon', 'THE RUSTY SPUR', s.x, s.y, 'em_rats');
+    const piles = [[7, 47], [9, 58], [18, 59], [21, 47], [6, 51.5], [15, 59.5]];
+    for (const [i, j] of piles) this.addProp('junk_pile', i * T, j * T, this.rnd() < 0.5);
+    for (const [i, j] of [[16, 51], [10, 51.2], [19, 56.5], [12, 56.5]]) this.addProp('burn_barrel', i * T, j * T, false);
+    // barricades on the highway with a gap for the lanes
+    this.addProp('barricade', 23.5 * T, 51 * T, false);
+    this.addProp('barricade', 23.5 * T, 56.2 * T, false);
+    this.addProp('car_wreck', 20 * T, 50 * T, true);
+    this.addProp('car_wreck', 8 * T, 55 * T, false);
+    this.addProp('car_wreck', 11 * T, 59.5 * T, true);
+    this.addProp('porta_potty', 17.6 * T, 47 * T, false);
+    this.addProp('car_pickup', 16.5 * T, 46.5 * T, false);
+    this.stains.push({ x: 15 * T, y: 52 * T, r: 90 }, { x: 11 * T, y: 54 * T, r: 60 }, { x: 18 * T, y: 54 * T, r: 70 });
+    this.garage = { x: 15 * T, y: 52 * T };
+    this.spawns.rats.push({ x: 14 * T, y: 52 * T }, { x: 18 * T, y: 50 * T }, { x: 10 * T, y: 56 * T });
+  }
+
+  genChurch() {
+    const T = TILE;
+    for (let j = 29; j <= 39; j++) for (let i = 73; i <= 87; i++) this.occ[j * N + i] = 1;
+    this.fillTiles(76, 31, 84, 38, TT.DIRT);
+    const c = this.addProp('church', 80 * T, 33.5 * T, false);
+    this.landmark('church', 'CHURCH OF THE BLESSED PROBE', c.x, c.y, 'em_church');
+    this.circles.push({ x: 79 * T, y: 37.5 * T, r: 120 });
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2;
+      this.addProp('shrub', 79 * T + Math.cos(a) * 150, 37.5 * T + Math.sin(a) * 150, k % 2 === 0);
+    }
+    this.addProp('saguaro', 75 * T, 31 * T, false);
+    this.addProp('saguaro', 86 * T, 36 * T, true);
+    this.addProp('trailer', 85 * T, 31.5 * T, true);
+    this.addProp('billboard_a', 74.5 * T, 38.6 * T, false);
+    this.spawns.church.push({ x: 79 * T, y: 37 * T }, { x: 82 * T, y: 38 * T });
+  }
+
+  genRanch() {
+    const T = TILE;
+    for (let j = 72; j <= 90; j++) for (let i = 28; i <= 52; i++) this.occ[j * N + i] = 1;
+    this.fillTiles(31, 74, 47, 87, TT.GRASS);
+    this.addProp('house_c', 33 * T, 76 * T, false);
+    this.addProp('water_tower', 37 * T, 75 * T, false);
+    this.addProp('trailer', 45 * T, 75.6 * T, false).keyItem = 'cowbell';
+    for (let k = 0; k < 9; k++) this.cows.push({ x: (33 + this.r(0, 13)) * T, y: (79 + this.r(0, 7)) * T });
+    this.ranch = { x: 40 * T, y: 82 * T };
+    this.landmark('ranch', 'OLD RANCH', this.ranch.x, this.ranch.y, 'btn_pet');
+    for (let j = 72; j <= 84; j++) for (let i = 56; i <= 66; i++) this.occ[j * N + i] = 1;
+    const u = this.addProp('crashed_ufo', 61 * T, 78 * T, false);
+    u.keyItem = 'fuse,slime';
+    this.landmark('crash', 'CRASH SITE', u.x, u.y, 'btn_search');
+    this.addProp('rocks', 58 * T, 76 * T, false);
+    this.addProp('saguaro', 64 * T, 80.5 * T, false);
+  }
+
+  genRoadside() {
+    // propaganda billboards along the highways, alien loudspeakers in town
+    const T = TILE;
+    for (const [type, i, j, f] of [['billboard_a', 36, 22, false], ['billboard_b', 70, 46, true], ['billboard_b', 24.5, 38, false], ['billboard_a', 60, 69.5, true], ['billboard_b', 45, 25.5, false]]) {
+      this.addProp(type, i * T, j * T, f);
+      this.occupy(Math.floor(i) - 1, Math.floor(j) - 1, 3, 2);
+    }
+    for (const [i, j] of [[31.2, 31.2], [64.8, 31.2], [31.2, 64.8], [64.8, 64.8]]) this.addProp('speaker_pole', i * T, j * T, false);
   }
 
   genStreets() {
@@ -322,13 +601,14 @@ export class World {
         const sideJ = ROADS.some((r) => j === r - 1 || j === r + 2);
         if (!sideI && !sideJ) continue;
         if (sideI && sideJ) continue; // corners
+        if (this.cgrid[j * N + i].length) continue;
         const along = sideI ? j : i;
         if (along % 5 === 2) this.addProp('streetlight', (i + 0.5) * TILE, (j + 0.5) * TILE, sideI ? i % 2 === 0 : j % 2 === 1);
         else if (hash2(i, j, this.seed) < 0.035) this.addProp('hydrant', (i + 0.5) * TILE, (j + 0.5) * TILE);
       }
     // Abandoned vehicles on the roads.
     const cars = ['car_police', 'car_sheriff', 'car_pickup', 'car_minivan', 'car_wreck', 'car_wreck'];
-    for (let n = 0; n < 10; n++) {
+    for (let n = 0; n < 12; n++) {
       const r = ROADS[this.ri(0, ROADS.length - 1)];
       const lane = r + this.ri(0, 1);
       const pos = this.ri(TOWN_A + 3, TOWN_B - 4);
@@ -356,7 +636,7 @@ export class World {
     const M = 12;
     for (let j = -M; j < N + M; j++)
       for (let i = -M; i < N + M; i++) {
-        if (inTown(i, j) || isHighway(i) || isHighway(j)) continue;
+        if (inTown(i, j) || isHighway(i) || isHighway(j) || inLot(i - 1, j - 1) || inLot(i + 1, j + 1)) continue;
         const inside = i >= 0 && j >= 0 && i < N && j < N;
         if (inside && !this.free(i, j)) continue;
         // Keep a margin around town clear-ish.
@@ -366,7 +646,8 @@ export class World {
         const y = (j + 0.5) * TILE + (hash2(i, j, this.seed + 5) - 0.5) * 30;
         const flip = hash2(i, j, this.seed + 9) < 0.5;
         let type = null;
-        if (r < 0.022) type = 'joshua_tree';
+        if (r < 0.016) type = 'joshua_tree';
+        else if (r < 0.024) type = 'saguaro';
         else if (r < 0.034 && !nearTown) type = 'rocks';
         else if (r < 0.08) type = 'shrub';
         else if (r < 0.0825 && inside && !nearTown) type = 'car_wreck';
@@ -374,9 +655,9 @@ export class World {
         this.addProp(type, x, y, flip, !inside);
         if (inside) this.occupy(i, j);
       }
-    // Landmarks inside the playable desert.
+    // Scattered landmarks in the open desert.
     const spots = (n, fn) => {
-      for (let k = 0, tries = 0; k < n && tries < 200; tries++) {
+      for (let k = 0, tries = 0; k < n && tries < 300; tries++) {
         const i = this.ri(3, N - 5), j = this.ri(3, N - 5);
         if (inTown(i - 2, j - 2) || inTown(i + 3, j + 3) || inTown(i, j)) continue;
         if (!this.freeRect(i, j, 3, 3)) continue;
@@ -387,11 +668,11 @@ export class World {
       }
     };
     spots(2, (i, j) => this.addProp('water_tower', (i + 1.5) * TILE, (j + 1.5) * TILE));
-    spots(3, (i, j) => {
+    spots(4, (i, j) => {
       this.addProp('trailer', (i + 1.5) * TILE, (j + 1) * TILE, this.rnd() < 0.5);
       this.lootSpots.push({ x: (i + 1.5) * TILE, y: (j + 2.4) * TILE, w: 2 });
     });
-    spots(3, (i, j) => {
+    spots(4, (i, j) => {
       const cx = (i + 1.5) * TILE, cy = (j + 1.5) * TILE;
       this.addProp('sandbags', cx - 50, cy + 30, false);
       this.addProp('sandbags', cx + 50, cy - 30, true);
@@ -400,6 +681,7 @@ export class World {
     spots(3, (i, j) => {
       for (let k = 0; k < 4; k++) this.cows.push({ x: (i + 0.3 + this.r(0, 2.4)) * TILE, y: (j + 0.3 + this.r(0, 2.4)) * TILE });
     });
+    spots(2, (i, j) => this.addProp('porta_potty', (i + 1.5) * TILE, (j + 1.5) * TILE, this.rnd() < 0.5));
   }
 
   // Intersections of the road grid (+ highway exits) for the panicking traffic.
@@ -426,7 +708,8 @@ export class World {
         if (b > 0) link(n, add(lines[a], lines[b - 1]));
       }
     for (const h of HIGHWAYS.map((r) => r + 1)) {
-      link(add(h, lines[0]), add(h, 1, true));
+      // nobody drives into the studio lot (the gate is a force field)
+      if (h !== 54) link(add(h, lines[0]), add(h, 1, true));
       link(add(h, lines[lines.length - 1]), add(h, N - 1, true));
       link(add(lines[0], h), add(1, h, true));
       link(add(lines[lines.length - 1], h), add(N - 1, h, true));
@@ -437,7 +720,7 @@ export class World {
     this.patches = [];
     for (let j = -14; j < N + 14; j += 1)
       for (let i = -14; i < N + 14; i += 1) {
-        if (inTown(i, j) || isHighway(i) || isHighway(j)) continue;
+        if (inTown(i, j) || isHighway(i) || isHighway(j) || inLot(i, j)) continue;
         const n = valueNoise(i / 5, j / 5, this.seed);
         if (n < 0.58 || hash2(i, j, this.seed + 11) > 0.55) continue;
         const r = TILE * (0.6 + (n - 0.58) * 5) * (0.7 + hash2(i, j, this.seed + 13) * 0.6);
@@ -452,24 +735,35 @@ export class World {
       const a = hw ? lo : TOWN_A, b = hw ? hi : TOWN_B;
       const line = (r + 1) * TILE;
       for (let k = a; k <= b; k++) {
-        if (isRoad(k) && (hw ? true : true) && (inTown(k, k) || HIGHWAYS.some((h) => k === h || k === h + 1))) continue;
+        if (isRoad(k) && (inTown(k, k) || HIGHWAYS.some((h) => k === h || k === h + 1))) continue;
         // horizontal road (constant y) and vertical road (constant x)
         this.dashes.push({ x0: k * TILE + 14, y0: line - 2, x1: k * TILE + 50, y1: line + 2 });
-        this.dashes.push({ x0: line - 2, y0: k * TILE + 14, x1: line + 2, y1: k * TILE + 50 });
+        if (!(r === 53 && k < LOT.y0 + 4)) this.dashes.push({ x0: line - 2, y0: k * TILE + 14, x1: line + 2, y1: k * TILE + 50 });
       }
     }
   }
 
   finalize() {
     // Mark unreachable cells as blocked so nothing spawns where it cannot be reached.
-    const si = Math.floor(this.start.x / TILE), sj = Math.floor(this.start.y / TILE);
     this.updateFlow(this.start.x, this.start.y, true);
     for (let k = 0; k < N * N; k++) if (this.flow[k] === 65535) this.blocked[k] = 1;
+    // ...but the studio lot is reachable once the gate opens
+    for (let j = LOT.y0 + 1; j < LOT.y1; j++)
+      for (let i = LOT.x0 + 1; i < LOT.x1; i++) {
+        const k = j * N + i;
+        if (this.blocked[k] && !this.cgrid[k].some((q) => q.box && !q.def.invisible)) this.blocked[k] = 0;
+      }
     this.lootSpots = this.lootSpots.filter((s) => !this.blocked[Math.floor(s.y / TILE) * N + Math.floor(s.x / TILE)]);
     this.props.sort((a, b) => a.depth - b.depth);
     this.lights = this.props.filter((p) => p.def.light);
     this.flowSrc = -1;
-    void si, sj;
+  }
+
+  // The studio gate opens (permit, bribe, remote) or gets blown up (dynamite).
+  openGate() {
+    if (!this.gateWall) return;
+    this.removeProp(this.gateWall);
+    this.gateWall = null;
   }
 
   // --- runtime queries -------------------------------------------------------
@@ -490,11 +784,26 @@ export class World {
     return k >= 0 && !this.blocked[k];
   }
 
-  // Precise point-in-collider test (used for bullets).
+  inLot(x, y) {
+    return inLot(Math.floor(x / TILE), Math.floor(y / TILE));
+  }
+
+  district(x, y) {
+    const i = x / TILE, j = y / TILE;
+    if (inLot(Math.floor(i), Math.floor(j))) return 'lot';
+    if (Math.hypot((i - 14) / 11, (j - 53) / 10) < 1.15) return 'junkyard';
+    if (i > 72 && i < 89 && j > 27 && j < 41) return 'church';
+    if (i > 27 && i < 53 && j > 71 && j < 91) return 'ranch';
+    if (inTown(Math.floor(i), Math.floor(j))) return j < T0 + 12 ? 'estates' : 'town';
+    return 'desert';
+  }
+
+  // Precise point-in-collider test (used for projectiles).
   hitProp(x, y) {
     const k = this.tileIndex(x, y);
     if (k < 0) return null;
     for (const p of this.cgrid[k]) {
+      if (p.def.invisible) continue;
       if (p.box) {
         if (x > p.box.x0 && x < p.box.x1 && y > p.box.y0 && y < p.box.y1) return p;
       } else if (p.circle >= 14) {
@@ -620,6 +929,71 @@ export class World {
     const tx = (bi + 0.5) * TILE - x, ty = (bj + 0.5) * TILE - y;
     const l = Math.hypot(tx, ty) || 1;
     return [tx / l, ty / l];
+  }
+
+  // A* over the walkable tiles (8-neighbour). Returns a list of world points or null.
+  findPath(x0, y0, x1, y1, maxNodes = 4000) {
+    const s = this.tileIndex(x0, y0);
+    let g = this.tileIndex(x1, y1);
+    if (s < 0 || g < 0) return null;
+    if (this.blocked[g]) {
+      // aim for the nearest open tile next to the target
+      const gi = g % N, gj = (g / N) | 0;
+      let best = -1, bd = 1e9;
+      for (let r = 1; r <= 4 && best < 0; r++)
+        for (let dj = -r; dj <= r; dj++)
+          for (let di = -r; di <= r; di++) {
+            const i = gi + di, j = gj + dj;
+            if (i < 0 || j < 0 || i >= N || j >= N || this.blocked[j * N + i]) continue;
+            const cx = (i + 0.5) * TILE, cy = (j + 0.5) * TILE;
+            const d = Math.hypot(cx - x0, cy - y0) * 0.25 + Math.hypot(cx - x1, cy - y1);
+            if (d < bd) (bd = d), (best = j * N + i);
+          }
+      if (best < 0) return null;
+      g = best;
+    }
+    if (s === g) return [{ x: x1, y: y1 }];
+    const gi = g % N, gj = (g / N) | 0;
+    const open = [s];
+    const came = new Map();
+    const cost = new Map([[s, 0]]);
+    const h = (k) => {
+      const dx = Math.abs((k % N) - gi), dy = Math.abs(((k / N) | 0) - gj);
+      return Math.max(dx, dy) + 0.41 * Math.min(dx, dy);
+    };
+    const f = new Map([[s, h(s)]]);
+    let n = 0;
+    while (open.length && n++ < maxNodes) {
+      let bi = 0;
+      for (let i = 1; i < open.length; i++) if (f.get(open[i]) < f.get(open[bi])) bi = i;
+      const k = open[bi];
+      open[bi] = open[open.length - 1];
+      open.pop();
+      if (k === g) break;
+      const i = k % N, j = (k / N) | 0;
+      for (let dj = -1; dj <= 1; dj++)
+        for (let di = -1; di <= 1; di++) {
+          if (!di && !dj) continue;
+          const x = i + di, y = j + dj;
+          if (x < 0 || y < 0 || x >= N || y >= N) continue;
+          const m = y * N + x;
+          if (this.blocked[m]) continue;
+          if (di && dj && (this.blocked[j * N + x] || this.blocked[y * N + i])) continue;
+          const c = cost.get(k) + (di && dj ? 1.41 : 1);
+          if (c < (cost.has(m) ? cost.get(m) : 1e9)) {
+            cost.set(m, c);
+            came.set(m, k);
+            f.set(m, c + h(m));
+            if (!open.includes(m)) open.push(m);
+          }
+        }
+    }
+    if (!came.has(g)) return null;
+    const path = [];
+    for (let k = g; k !== s; k = came.get(k)) path.push({ x: ((k % N) + 0.5) * TILE, y: (((k / N) | 0) + 0.5) * TILE });
+    path.reverse();
+    path[path.length - 1] = { x: x1, y: y1 };
+    return path;
   }
 
   // Random walkable spot at a distance band around a point.
